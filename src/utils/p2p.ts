@@ -238,7 +238,7 @@ export class WebRTCEngine {
   }
 
   public async sendText(text: string, expiry?: number): Promise<string> {
-    const id = crypto.randomUUID();
+    const id = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
     await this.sendPayload({ type: 'text', data: text, expiry, id });
     return id;
   }

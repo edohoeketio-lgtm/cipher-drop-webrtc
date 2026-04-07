@@ -16,12 +16,13 @@ test('E2E Ghost Terminal V3 QA Simulation', async () => {
 
     await hostPage.goto('http://localhost:5173');
     await hostPage.waitForSelector('button');
-    await hostPage.locator('button', { hasText: /^HOST$/ }).click();
+    await hostPage.locator('button', { hasText: 'HOST_NETWORK' }).click();
     console.log('[QA] Clicked HOST button');
     
-    await expect(hostPage.locator('.hud-panel')).toContainText('LISTENING_ON_CHANNEL...', { timeout: 15000 });
+    await expect(hostPage.locator('.hud-panel')).toContainText('DERIVING...', { timeout: 15000 });
     
     // Now the signature box should be visible
+    await expect(hostPage.locator('.hud-panel')).toContainText('LISTENING_ON_CHANNEL...', { timeout: 15000 });
     const signatureLocator = hostPage.locator('.hud-panel > div:nth-child(2)');
     const signature = (await signatureLocator.innerText()).trim();
     console.log(`[QA] Generated Host Signature: ${signature}`);
@@ -31,7 +32,7 @@ test('E2E Ghost Terminal V3 QA Simulation', async () => {
     const peerPage = await peerContext.newPage();
     await peerPage.goto('http://localhost:5173');
     
-    await peerPage.click('text=JOIN');
+    await peerPage.click('text=JOIN_NETWORK');
     
     // Input signature
     await peerPage.fill('input[placeholder="ALPHA-BRAVO-CHARLIE-DELTA"]', signature);
