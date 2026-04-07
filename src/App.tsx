@@ -1,222 +1,397 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Fingerprint, XSquare, Send, Upload } from 'lucide-react';
-import { WebRTCEngine, Payload } from './utils/p2p';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { WebRTCEngine, type Payload, GROUP_FILE_LIMIT } from './utils/p2p';
 import { generateRoomCode } from './utils/wordlist';
+import { deriveKey, hashString } from './utils/crypto';
 
-type AppState = 'lobby' | 'joining' | 'hosting' | 'chat';
+type AppState = 'lobby' | 'deriving' | 'joining' | 'hosting' | 'chat';
+
+interface TransferState {
+  total: number;
+  transferred: number;
+  isUpload: boolean;
+}
+
+function EphemeralMessage({ 
+  msg, isMe, timestamp, onExpunge
+}: { 
+  msg: Extract<Payload, {type: 'text'}>, isMe: boolean, timestamp: string, onExpunge?: (id: string) => void
+}) {
+  const isSystem = !isMe && (msg.data.startsWith('E2E_') || msg.data.startsWith('UPLOAD_COMPLETE') || msg.data.startsWith('SYS_') || msg.data.startsWith('ERR_'));
+  
+  let tag = isMe ? '<LOCAL>' : '<REMOTE>';
+  if (isSystem) tag = '<SYS>';
+
+  let color = isMe ? 'var(--text-bright)' : 'var(--accent-cyan)';
+  if (isSystem) color = 'var(--text-muted)';
+
+  const [timeLeft, setTimeLeft] = useState<number | null>(msg.expiry || null);
+
+  useEffect(() => {
+    if (timeLeft === null) return;
+    if (timeLeft <= 0) {
+      if (onExpunge && msg.id && msg.data !== '[DATA EXPUNGED]') {
+         onExpunge(msg.id);
+      }
+      return;
+    }
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev && prev <= 1) {
+          clearInterval(timer);
+          if (onExpunge && msg.id && msg.data !== '[DATA EXPUNGED]') {
+             onExpunge(msg.id);
+          }
+          return 0;
+        }
+        return prev ? prev - 1 : 0;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [timeLeft, msg.id, onExpunge, msg.data]);
+
+  const isExpunged = msg.data === '[DATA EXPUNGED]';
+  const timeStr = (timeLeft !== null && !isExpunged) ? ` (💣 ${timeLeft}s)` : '';
+
+  return (
+    <div style={{ marginBottom: '4px', overflowWrap: 'break-word', color: isExpunged ? 'var(--text-muted)' : color }}>
+      <span style={{ color: 'var(--text-muted)' }}>[{timestamp}] {tag}</span> {msg.data}{timeStr}
+    </div>
+  );
+}
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('lobby');
   const [roomCode, setRoomCode] = useState<string>('');
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
-  const [status, setStatus] = useState<string>('disconnected');
-  const [messages, setMessages] = useState<Payload[]>([]);
+  const [status, setStatus] = useState<string>('DISCONNECTED');
+  const [messages, setMessages] = useState<{msg: Payload, isMe: boolean, timestamp: string}[]>([]);
+  const [transfers, setTransfers] = useState<Record<string, TransferState>>({});
   const [textInput, setTextInput] = useState('');
+  const [expirySelection, setExpirySelection] = useState<number | undefined>(undefined);
+  const [roomSize, setRoomSize] = useState(1);
 
   const engineRef = useRef<WebRTCEngine | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scroll chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, transfers]);
+
+  const getTimestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false });
+
+  const addSystemMessage = (text: string) => {
+    setMessages(prev => [...prev, { msg: { type: 'text', data: text }, isMe: false, timestamp: getTimestamp() }]);
+  };
+
+  const handleNukeReset = () => {
+    if (engineRef.current) engineRef.current.disconnect();
+    setAppState('lobby');
+    setMessages([]);
+    setTransfers({});
+    setStatus('DISCONNECTED');
+    setRoomSize(1);
+    addSystemMessage('SYS_NUKE_EXECUTED');
+  };
 
   const initEngine = () => {
     if (engineRef.current) engineRef.current.disconnect();
     
     engineRef.current = new WebRTCEngine(
-      (payload) => setMessages((prev) => [...prev, payload]),
+      (payload) => {
+        if (payload.type === 'sys-room-update') {
+          setRoomSize(payload.size);
+        }
+        else if (payload.type === 'sys-nuke') {
+          handleNukeReset();
+        }
+        else if (payload.type === 'text' || payload.type === 'file-ready') {
+          setMessages((prev) => [...prev, {msg: payload, isMe: false, timestamp: getTimestamp()}]);
+        }
+      },
       (newStatus) => {
-        setStatus(newStatus);
-        if (newStatus === 'connected') setAppState('chat');
+        setStatus(newStatus.toUpperCase());
+        if (newStatus === 'connected') {
+          setAppState('chat');
+          if (engineRef.current?.isHost) {
+              setRoomSize(1);
+          }
+          addSystemMessage('E2E_AES_GCM_SECURE_TUNNEL_ESTABLISHED');
+        }
         if (newStatus === 'disconnected' || newStatus === 'error') {
           setAppState('lobby');
-          alert(newStatus === 'error' ? 'Connection Error!' : 'Peer Disconnected.');
+          alert(newStatus === 'error' ? 'ERR/01: connection_failure' : 'PEER_DISCONNECTED');
+        }
+      },
+      (fileId, transferred, total, isUpload) => {
+        setTransfers(prev => ({ ...prev, [fileId]: { total, transferred, isUpload } }));
+        if (isUpload && transferred >= total) {
+           setTimeout(() => {
+             setTransfers(prev => { const next = { ...prev }; delete next[fileId]; return next; });
+             addSystemMessage(`UPLOAD_COMPLETE: ${fileId.substring(0,8)}`);
+           }, 1000);
+        } else if (!isUpload && transferred >= total) {
+           setTimeout(() => {
+               setTransfers(prev => { const next = { ...prev }; delete next[fileId]; return next; });
+           }, 1000);
         }
       }
     );
   };
 
-  const handleHost = () => {
+  const handleHost = async () => {
     const code = generateRoomCode();
     setRoomCode(code);
-    setAppState('hosting');
-    initEngine();
-    engineRef.current?.host(code);
+    setAppState('deriving');
+    try {
+      await new Promise(r => setTimeout(r, 50)); 
+      const key = await deriveKey(code);
+      const hashedId = await hashString(code);
+      initEngine();
+      engineRef.current?.host(hashedId, key);
+      setAppState('hosting');
+    } catch (e) {
+      alert("ERR/02: derivation_failed");
+      setAppState('lobby');
+    }
   };
 
-  const handleJoinInit = () => {
-    setAppState('joining');
-  };
+  const handleJoinInit = () => setAppState('joining');
 
-  const handleJoinSubmit = (e: React.FormEvent) => {
+  const handleJoinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!joinCodeInput) return;
-    initEngine();
-    engineRef.current?.join(joinCodeInput.trim().toUpperCase());
+    const code = joinCodeInput.trim().toUpperCase();
+    if (!code) return;
+    setAppState('deriving');
+    try {
+      await new Promise(r => setTimeout(r, 50)); 
+      const key = await deriveKey(code);
+      const hashedId = await hashString(code);
+      initEngine();
+      engineRef.current?.join(hashedId, key);
+    } catch (e) {
+      alert("ERR/02: derivation_failed");
+      setAppState('lobby');
+    }
+  };
+
+  const executeNuke = () => {
+      engineRef.current?.sendNuke().catch(console.error);
   };
 
   const handleDisconnect = () => {
     engineRef.current?.disconnect();
     setAppState('lobby');
     setMessages([]);
+    setTransfers({});
+    setStatus('DISCONNECTED');
   };
 
-  const handleSendText = (e: React.FormEvent) => {
+  const handleExpunge = useCallback((id: string) => {
+    setMessages(prev => prev.map(m => {
+       if (m.msg.type === 'text' && m.msg.id === id) {
+           return { ...m, msg: { ...m.msg, data: '[DATA EXPUNGED]' } };
+       }
+       return m;
+    }));
+  }, []);
+
+  const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!textInput.trim() || !engineRef.current) return;
-    const payload: Payload = { type: 'text', data: textInput };
-    // Optimistic local update
-    setMessages((prev) => [...prev, payload]);
-    engineRef.current.sendText(textInput);
+    const id = await engineRef.current.sendText(textInput, expirySelection);
+    const payload: Payload = { type: 'text', data: textInput, expiry: expirySelection, id };
+    setMessages((prev) => [...prev, {msg: payload, isMe: true, timestamp: getTimestamp()}]);
     setTextInput('');
   };
 
-  const handleFileDrop = (e: React.DragEvent) => {
+  const uploadFiles = async (files: FileList | null) => {
+      if (!engineRef.current || !files || files.length === 0) return;
+      for (let i = 0; i < files.length; i++) {
+         const file = files[i];
+         if (roomSize > 2 && file.size > GROUP_FILE_LIMIT) {
+             addSystemMessage(`ERR_FILE_TOO_LARGE: ${file.name} exceeds 50MB group cap`);
+             continue;
+         }
+         setMessages(prev => [...prev, { msg: { type: 'text', data: `[TX_INIT: ${file.name}]`, expiry: expirySelection }, isMe: true, timestamp: getTimestamp() }]);
+         await engineRef.current.sendFile(file).catch(err => {
+             addSystemMessage(`ERR_TX_FAILED: ${err.message}`);
+         });
+      }
+  }
+
+  const handleFileDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      engineRef.current?.sendFile(file);
-      // We don't optimistically render files locally to save memory, 
-      // just a text stub to confirm it sent.
-      setMessages((prev) => [...prev, { type: 'text', data: `[SENT FILE: ${file.name}]` }]);
-    }
+    await uploadFiles(e.dataTransfer.files);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+
+  const renderProgressBar = (percent: number) => {
+    const blocks = 20;
+    const filled = Math.floor((percent / 100) * blocks);
+    const empty = blocks - filled;
+    return `[${'█'.repeat(filled)}${'░'.repeat(empty)}]`;
   };
 
-  // Renders the correct blob preview
-  const renderPayload = (msg: Payload, index: number) => {
+  const renderPayload = (entry: {msg: Payload, isMe: boolean, timestamp: string}, index: number) => {
+    const { msg, isMe, timestamp } = entry;
+    
     if (msg.type === 'text') {
-      return <div key={index} style={{ marginBottom: '16px', overflowWrap: 'break-word' }}>&gt; {msg.data}</div>;
+      return <EphemeralMessage key={index} msg={msg} isMe={isMe} timestamp={timestamp} onExpunge={handleExpunge} />;
     }
     
-    // Convert ArrayBuffer back to an object URL for rendering
-    const blob = new Blob([msg.data], { type: msg.mimeType });
-    const url = URL.createObjectURL(blob);
-
-    return (
-      <div key={index} className="brutal-border" style={{ padding: '8px', marginBottom: '16px', display: 'inline-block' }}>
-        <div style={{ fontSize: '0.8rem', color: 'var(--neon-green)', marginBottom: '8px' }}>[RCV: {msg.name}]</div>
-        {msg.type === 'image' && <img src={url} alt="received" style={{ maxWidth: '300px', display: 'block' }} />}
-        {msg.type === 'audio' && <audio src={url} controls style={{ display: 'block' }} />}
-        {msg.type === 'file' && <a href={url} download={msg.name} style={{ color: 'var(--neon-green)' }}>Download {msg.name}</a>}
-      </div>
-    );
+    if (msg.type === 'file-ready') {
+        const url = URL.createObjectURL(msg.blob);
+        const tag = isMe ? '<LOCAL>' : '<REMOTE>';
+        return (
+            <div key={index} style={{ marginBottom: '8px' }}>
+                <div style={{ color: 'var(--accent-success)' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>[{timestamp}] {tag}</span> [RX_COMPLETE: {msg.name} // {Math.floor(msg.blob.size/1024)}KB]
+                </div>
+                <div style={{ marginLeft: '16px', marginTop: '4px', paddingLeft: '8px', borderLeft: '1px solid var(--border-subtle)' }}>
+                    {msg.blob.type.startsWith('image/') && <img src={url} alt="asset" style={{ maxWidth: '100%', maxHeight: '300px', display: 'block', margin: '8px 0', border: '1px solid var(--border-subtle)' }} />}
+                    {msg.blob.type.startsWith('audio/') && <audio src={url} controls style={{ display: 'block', marginTop: '8px', opacity: 0.8, height: '30px' }} />}
+                    {msg.blob.type.startsWith('video/') && <video src={url} controls style={{ maxWidth: '100%', maxHeight: '300px', display: 'block', margin: '8px 0' }} />}
+                    <a href={url} download={msg.name} style={{ color: 'var(--text-bright)', textDecoration: 'none', display: 'inline-block', marginTop: '4px' }}>
+                        <span className="glow-text">» DOWNLOAD_ASSET</span>
+                    </a>
+                </div>
+            </div>
+        );
+    }
+    return null;
   };
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-      
-      {/* Header */}
-      <h1 style={{ fontSize: '3rem', textTransform: 'uppercase', marginBottom: '40px', textAlign: 'center', letterSpacing: '-2px' }}>
-        <Shield size={48} style={{ verticalAlign: 'middle', marginRight: '16px', color: 'var(--neon-green)' }} />
-        Cipher Drop
-      </h1>
-
-      {appState === 'lobby' && (
-        <div style={{ display: 'flex', gap: '24px', flexDirection: 'column', width: '100%', maxWidth: '400px' }}>
-          <button className="brutal-button" style={{ padding: '24px', fontSize: '1.5rem' }} onClick={handleHost}>
-            Host Drop
-          </button>
-          <button className="brutal-button" style={{ padding: '24px', fontSize: '1.5rem' }} onClick={handleJoinInit}>
-            Join Drop
-          </button>
-          <p style={{ textAlign: 'center', opacity: 0.6, fontSize: '0.9rem', marginTop: '32px' }}>
-            A stateless, zero-knowledge, WebRTC transient drop point. <br />Nothing is saved.
-          </p>
-        </div>
-      )}
-
-      {appState === 'joining' && (
-        <form onSubmit={handleJoinSubmit} style={{ width: '100%', maxWidth: '500px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <p style={{ color: 'var(--neon-green)' }}>ENTER HOST CODE:</p>
-          <input 
-            type="text" 
-            className="brutal-input" 
-            placeholder="e.g. NEON-WOLF-ECHO-BASE" 
-            value={joinCodeInput} 
-            onChange={e => setJoinCodeInput(e.target.value)} 
-            autoFocus 
-          />
-          <button type="submit" className="brutal-button" disabled={status === 'connecting'}>
-            {status === 'connecting' ? 'CONNECTING...' : 'INITIATE CONNECTION'}
-          </button>
-          <button type="button" onClick={() => setAppState('lobby')} style={{ background: 'none', border: 'none', color: 'var(--text-white)', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'monospace' }}>
-            Cancel
-          </button>
-        </form>
-      )}
-
-      {appState === 'hosting' && (
-        <div className="brutal-border-green brutal-shadow" style={{ padding: '48px', width: '100%', maxWidth: '600px', textAlign: 'center' }}>
-          <Fingerprint size={64} style={{ color: 'var(--neon-green)', marginBottom: '24px' }} />
-          <h2 style={{ fontSize: '1.5rem', marginBottom: '16px' }}>YOUR OVERRIDE CODE</h2>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700, letterSpacing: '2px', color: 'var(--neon-green)', wordBreak: 'break-all' }}>
-            {roomCode}
+    <>
+      <div className="crt-overlay" />
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', padding: '16px' }}>
+        
+        {/* Header HUD */}
+        <div style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ color: 'var(--text-bright)' }}><span className="glow-text" style={{ color: 'var(--accent-cyan)' }}>GHOST</span>_PROTOCOL</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: '10px', marginTop: '4px' }}>KERNEL v3.0.0 // ZERO_KNOWLEDGE</div>
           </div>
-          <p style={{ marginTop: '32px' }}>
-            {status === 'connecting' ? 'WAITING FOR PEER TO CONNECT...' : 'ERROR: REFRESH'}
-          </p>
-          <button onClick={handleDisconnect} className="brutal-button" style={{ marginTop: '24px', fontSize: '1rem', padding: '8px 16px', borderColor: 'var(--error-red)', color: 'var(--error-red)' }}>
-            Abort
-          </button>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: 'var(--text-muted)' }}>STATUS: <span style={{ color: status === 'CONNECTED' ? 'var(--accent-success)' : 'var(--text-muted)' }}>{status}</span></div>
+            <div style={{ color: 'var(--text-muted)', fontSize: '10px', marginTop: '4px' }}>{getTimestamp()} <span className="blink">█</span></div>
+          </div>
         </div>
-      )}
 
-      {appState === 'chat' && (
-        <div 
-          className="brutal-border" 
-          style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '800px', height: '70vh' }}
-          onDrop={handleFileDrop}
-          onDragOver={handleDragOver}
-        >
-          {/* View Toolbar */}
-          <div style={{ padding: '16px', borderBottom: '2px solid var(--text-white)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <span style={{ color: 'var(--neon-green)' }}>●</span> PEER CONNECTED (E2E)
+        {/* Central Area */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+          {appState === 'lobby' && (
+            <div className="hud-panel" style={{ padding: '32px', width: '100%', maxWidth: '440px' }}>
+               <div style={{ color: 'var(--text-muted)', marginBottom: '16px', fontSize: '11px', lineHeight: '1.6', borderBottom: '1px dashed var(--border-subtle)', paddingBottom: '16px' }}>
+                 Volatile P2P relay network. Zero-knowledge transmission. <br/>
+                 No central routing. No persistent data logs. <br/>
+                 Ephemeral by design.
+               </div>
+               <div style={{ color: 'var(--text-muted)', marginBottom: '24px' }}>&gt; SYSTEM_READY<br/>&gt; AWAITING_COMMAND</div>
+               <div style={{ display: 'flex', gap: '16px' }}>
+                 <button className="ghost-button" onClick={handleHost}>HOST_NETWORK</button>
+                 <button className="ghost-button" onClick={handleJoinInit}>JOIN_NETWORK</button>
+               </div>
             </div>
-            <button onClick={handleDisconnect} style={{ background: 'none', border: 'none', color: 'var(--error-red)', cursor: 'pointer' }}>
-              <XSquare />
-            </button>
-          </div>
+          )}
 
-          {/* Messages Area */}
-          <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
-            {messages.length === 0 && (
-              <div style={{ opacity: 0.5, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-                TUNNEL ACTIVE.<br/>Drag & Drop files here, or type below.
-              </div>
-            )}
-            {messages.map((msg, idx) => renderPayload(msg, idx))}
-            <div ref={messagesEndRef} />
-          </div>
+          {appState === 'deriving' && (
+            <div className="hud-panel" style={{ padding: '32px', width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+               <div style={{ color: 'var(--accent-cyan)' }}>&gt; EXECUTING KDF_PBKDF2_SHA256</div>
+               <div style={{ color: 'var(--text-muted)' }}>ITERATIONS: 100,000</div>
+               <div style={{ color: 'var(--text-muted)' }}>TARGET: 256-BIT AES-GCM</div>
+               <div style={{ color: 'var(--accent-cyan)', marginTop: '8px' }} className="blink">DERIVING...</div>
+            </div>
+          )}
 
-          {/* Drag Overlay Hint */}
-          <div style={{ padding: '8px', borderTop: '2px solid var(--dim-gray)', fontSize: '0.8rem', opacity: 0.7, textAlign: 'center' }}>
-            <Upload size={16} style={{ verticalAlign: 'middle', marginRight: '8px' }} />
-            DRAG FILES ANYWHERE TO SEND
-          </div>
+          {appState === 'joining' && (
+            <form onSubmit={handleJoinSubmit} className="hud-panel" style={{ padding: '32px', width: '100%', maxWidth: '440px' }}>
+               <div style={{ color: 'var(--text-muted)', marginBottom: '16px' }}>&gt; INPUT_HOST_SIGNATURE:</div>
+               <input type="text" className="ghost-input" placeholder="ALPHA-BRAVO-CHARLIE-DELTA" value={joinCodeInput} onChange={e => setJoinCodeInput(e.target.value)} autoFocus />
+               <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'space-between' }}>
+                 <button type="submit" className="ghost-button" style={{ color: 'var(--accent-cyan)' }}>CONNECT</button>
+                 <button type="button" className="ghost-button" onClick={() => setAppState('lobby')}>ABORT</button>
+               </div>
+            </form>
+          )}
 
-          {/* Input Area */}
-          <form onSubmit={handleSendText} style={{ display: 'flex', borderTop: '2px solid var(--text-white)' }}>
-            <input 
-              type="text" 
-              value={textInput}
-              onChange={e => setTextInput(e.target.value)}
-              placeholder="Inject payload..."
-              style={{ flex: 1, background: 'transparent', border: 'none', color: 'var(--neon-green)', padding: '24px', fontSize: '1.2rem', fontFamily: 'Space Mono, monospace', outline: 'none' }}
-              autoFocus
-            />
-            <button type="submit" style={{ padding: '0 32px', background: 'var(--text-white)', color: 'var(--bg-black)', border: 'none', cursor: 'pointer' }}>
-              <Send />
-            </button>
-          </form>
+          {appState === 'hosting' && (
+            <div className="hud-panel" style={{ padding: '32px', width: '100%', maxWidth: '500px' }}>
+               <div style={{ color: 'var(--text-muted)', marginBottom: '8px' }}>&gt; LOCAL_SIGNATURE_GENERATED</div>
+               <div style={{ color: 'var(--accent-success)', fontSize: '18px', fontWeight: 500, letterSpacing: '2px', overflowWrap: 'break-word', padding: '16px', border: '1px solid var(--border-subtle)', background: 'rgba(0,255,65,0.05)' }}>
+                 {roomCode}
+               </div>
+               <div style={{ color: 'var(--text-muted)', marginTop: '24px' }}>&gt; LISTENING_ON_CHANNEL... <span className="blink">█</span></div>
+               <div style={{ marginTop: '32px' }}><button onClick={handleDisconnect} className="ghost-button" style={{ color: 'var(--accent-alert)' }}>ABORT</button></div>
+            </div>
+          )}
+
+          {appState === 'chat' && (
+            <div className="hud-panel" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '800px', height: '100%', maxHeight: '85vh' }} onDrop={handleFileDrop} onDragOver={handleDragOver}>
+               <div style={{ padding: '12px', borderBottom: '1px dashed var(--border-subtle)', display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
+                 <div>:: SECURE_CHANNEL_ACTIVE // PEERS: {roomSize} // CAP: {roomSize > 2 ? '50MB' : 'UNLIMITED'}{engineRef.current?.isHost && ` // ROOM_ID: ${roomCode}`}</div>
+                 <div>
+                    {engineRef.current?.isHost ? (
+                        <button onClick={executeNuke} style={{ background: 'none', border: '1px solid var(--accent-alert)', padding: '2px 8px', color: 'var(--accent-alert)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '10px' }}>
+                          [NUKE_TUNNEL]
+                        </button>
+                    ) : (
+                        <button onClick={handleDisconnect} style={{ background: 'none', border: 'none', color: 'var(--accent-alert)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}>
+                          [TERMINATE]
+                        </button>
+                    )}
+                 </div>
+               </div>
+
+               <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                 {messages.map((msg, idx) => renderPayload(msg, idx))}
+                 {Object.entries(transfers).map(([id, transfer]) => {
+                   const percentage = Math.floor((transfer.transferred / transfer.total) * 100);
+                   const tag = transfer.isUpload ? '<LOCAL>' : '<REMOTE>';
+                   const action = transfer.isUpload ? 'TX' : 'RX';
+                   const color = transfer.isUpload ? 'var(--text-primary)' : 'var(--accent-cyan)';
+                   return (
+                     <div key={id} style={{ marginBottom: '8px', color }}>
+                       <span style={{ color: 'var(--text-muted)' }}>[{getTimestamp()}] {tag}</span> [{action}: {id.substring(0,8)}] {renderProgressBar(percentage)} {percentage}%
+                     </div>
+                   );
+                 })}
+                 <div ref={messagesEndRef} />
+               </div>
+
+               <div style={{ borderTop: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', borderBottom: '1px dashed var(--border-subtle)' }}>
+                      <select 
+                         className="ghost-input" 
+                         style={{ width: '100px', borderRight: '1px solid var(--border-subtle)', borderBottom: 'none', borderTop: 'none', borderLeft: 'none', padding: '8px' }}
+                         value={expirySelection === undefined ? 'OFF' : expirySelection.toString()}
+                         onChange={e => setExpirySelection(e.target.value === 'OFF' ? undefined : parseInt(e.target.value))}
+                      >
+                         <option value="OFF">💣 OFF</option>
+                         <option value="10">💣 10s</option>
+                         <option value="30">💣 30s</option>
+                         <option value="60">💣 60s</option>
+                      </select>
+                      <button 
+                         className="ghost-button" 
+                         style={{ border: 'none', borderRight: '1px solid var(--border-subtle)', padding: '8px 16px', color: 'var(--text-bright)' }}
+                         onClick={() => fileInputRef.current?.click()}
+                      >
+                         [ATTACH_ASSET]
+                      </button>
+                      <input type="file" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={(e) => uploadFiles(e.target.files)} />
+                  </div>
+                  <form onSubmit={handleSendText} style={{ display: 'flex' }}>
+                    <div style={{ padding: '16px', color: 'var(--text-muted)' }}>&gt;</div>
+                    <input type="text" value={textInput} onChange={e => setTextInput(e.target.value)} className="ghost-input" style={{ border: 'none', boxShadow: 'none', background: 'transparent' }} placeholder="Insert payload..." autoFocus />
+                  </form>
+               </div>
+            </div>
+          )}
         </div>
-      )}
-
-    </div>
+      </div>
+    </>
   );
 }
