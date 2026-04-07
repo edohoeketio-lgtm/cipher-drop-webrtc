@@ -22,7 +22,7 @@ export async function deriveKey(code: string): Promise<CryptoKey> {
     {
       name: 'PBKDF2',
       salt: STATIC_SALT,
-      iterations: 100000,
+      iterations: 10000,
       hash: 'SHA-256'
     },
     keyMaterial,

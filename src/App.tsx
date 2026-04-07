@@ -61,6 +61,7 @@ function EphemeralMessage({
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('lobby');
+  const [sysError, setSysError] = useState<string | null>(null);
   const [roomCode, setRoomCode] = useState<string>('');
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
   const [status, setStatus] = useState<string>('DISCONNECTED');
@@ -143,16 +144,18 @@ export default function App() {
     const code = generateRoomCode();
     setRoomCode(code);
     setAppState('deriving');
+    setSysError(null);
     try {
       await new Promise(r => setTimeout(r, 50)); 
+      if (!window.crypto?.subtle) throw new Error("WebCrypto API not available (requires HTTPS or localhost secure context)");
       const key = await deriveKey(code);
       const hashedId = await hashString(code);
       initEngine();
       engineRef.current?.host(hashedId, key);
       setAppState('hosting');
-    } catch (e) {
-      alert("ERR/02: derivation_failed");
-      setAppState('lobby');
+    } catch (e: any) {
+      console.error('Derive error:', e);
+      setSysError(e.message || e.name || "Unknown derivation error");
     }
   };
 
@@ -163,15 +166,17 @@ export default function App() {
     const code = joinCodeInput.trim().toUpperCase();
     if (!code) return;
     setAppState('deriving');
+    setSysError(null);
     try {
       await new Promise(r => setTimeout(r, 50)); 
+      if (!window.crypto?.subtle) throw new Error("WebCrypto API not available (requires HTTPS or localhost secure context)");
       const key = await deriveKey(code);
       const hashedId = await hashString(code);
       initEngine();
       engineRef.current?.join(hashedId, key);
-    } catch (e) {
-      alert("ERR/02: derivation_failed");
-      setAppState('lobby');
+    } catch (e: any) {
+      console.error('Derive error:', e);
+      setSysError(e.message || e.name || "Unknown derivation error");
     }
   };
 
@@ -300,9 +305,18 @@ export default function App() {
           {appState === 'deriving' && (
             <div className="hud-panel" style={{ padding: '32px', width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                <div style={{ color: 'var(--accent-cyan)' }}>&gt; EXECUTING KDF_PBKDF2_SHA256</div>
-               <div style={{ color: 'var(--text-muted)' }}>ITERATIONS: 100,000</div>
+               <div style={{ color: 'var(--text-muted)' }}>ITERATIONS: 10,000</div>
                <div style={{ color: 'var(--text-muted)' }}>TARGET: 256-BIT AES-GCM</div>
-               <div style={{ color: 'var(--accent-cyan)', marginTop: '8px' }} className="blink">DERIVING...</div>
+               
+               {sysError ? (
+                  <div style={{ color: 'var(--accent-alert)', marginTop: '16px' }}>&gt; FATAL_EXCEPTION: {sysError}</div>
+               ) : (
+                  <div style={{ color: 'var(--accent-cyan)', marginTop: '16px' }} className="blink">DERIVING...</div>
+               )}
+
+               {sysError && (
+                 <button className="ghost-button" style={{ marginTop: '24px' }} onClick={() => { setAppState('lobby'); setSysError(null); }}>[ABORT]</button>
+               )}
             </div>
           )}
 
