@@ -15,19 +15,28 @@ export async function deriveKey(code: string): Promise<CryptoKey> {
     enc.encode(code),
     { name: 'PBKDF2' },
     false,
-    ['deriveBits', 'deriveKey']
+    ['deriveBits']
   );
 
-  return crypto.subtle.deriveKey(
+  // Safari/iOS WebKit Bug Workaround:
+  // Directly using deriveKey with PBKDF2 -> AES-GCM can hang or fail silently on mobile.
+  // We manually extract the raw bits via deriveBits, then import them into an AES-GCM CryptoKey.
+  const rawBits = await crypto.subtle.deriveBits(
     {
       name: 'PBKDF2',
       salt: STATIC_SALT,
-      iterations: 10000,
+      iterations: 10000, // You can bump this back to 100,000 now!
       hash: 'SHA-256'
     },
     keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false, // We don't need to extract the key later
+    256
+  );
+
+  return crypto.subtle.importKey(
+    'raw',
+    rawBits,
+    { name: 'AES-GCM' },
+    false,
     ['encrypt', 'decrypt']
   );
 }
