@@ -83,6 +83,7 @@ export default function App() {
 
   const engineRef = useRef<WebRTCEngine | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isManualDisconnectRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -142,11 +143,14 @@ export default function App() {
           addSystemMessage('E2E_AES_GCM_SECURE_TUNNEL_ESTABLISHED');
         }
         if (newStatus === 'disconnected' || newStatus === 'error') {
+          if (!isManualDisconnectRef.current) {
+            setModalData({
+              title: newStatus === 'error' ? 'FATAL_EXCEPTION' : 'TUNNEL_SEVERED',
+              message: newStatus === 'error' ? 'ERR/01: connection_failure' : 'PEER_DISCONNECTED'
+            });
+          }
           setAppState('lobby');
-          setModalData({
-            title: newStatus === 'error' ? 'FATAL_EXCEPTION' : 'TUNNEL_SEVERED',
-            message: newStatus === 'error' ? 'ERR/01: connection_failure' : 'PEER_DISCONNECTED'
-          });
+          isManualDisconnectRef.current = false;
         }
       },
       (fileId, transferred, total, isUpload) => {
@@ -212,11 +216,20 @@ export default function App() {
   };
 
   const handleDisconnect = () => {
+    isManualDisconnectRef.current = true;
     engineRef.current?.disconnect();
     setAppState('lobby');
     setMessages([]);
     setTransfers({});
     setStatus('DISCONNECTED');
+  };
+
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(roomCode);
+    } catch(e) {
+      console.error('Failed to copy', e);
+    }
   };
 
   const handleExpunge = useCallback((id: string) => {
@@ -320,7 +333,7 @@ export default function App() {
              <div style={{ color: 'var(--accent-alert)', marginBottom: '16px', fontWeight: 'bold', letterSpacing: '1px' }}>&gt; {modalData.title}</div>
              <div style={{ color: 'var(--text-bright)', marginBottom: '32px', fontSize: '1.2rem' }}>{modalData.message}</div>
              <button className="ghost-button" style={{ width: '100%', color: 'var(--text-bright)', borderColor: 'var(--accent-alert)', opacity: 0.9 }} onClick={() => setModalData(null)}>
-               [ ACKNOWLEDGE ]
+               ACKNOWLEDGE
              </button>
           </div>
         </div>
@@ -392,6 +405,9 @@ export default function App() {
                <div style={{ color: 'var(--accent-success)', fontSize: '18px', fontWeight: 500, letterSpacing: '2px', overflowWrap: 'break-word', padding: '16px', border: '1px solid var(--border-subtle)', background: 'rgba(0,255,65,0.05)' }}>
                  {roomCode}
                </div>
+               <button className="ghost-button" style={{ marginTop: '8px', padding: '4px 12px', fontSize: '12px', color: 'var(--text-bright)' }} onClick={handleCopyCode}>
+                 [ COPY SHADOW-LINK ]
+               </button>
                <div style={{ color: 'var(--text-muted)', marginTop: '24px' }}>&gt; LISTENING_ON_CHANNEL... <span className="blink">█</span></div>
                <div style={{ marginTop: '32px' }}><button onClick={handleDisconnect} className="ghost-button" style={{ color: 'var(--accent-alert)' }}>ABORT</button></div>
             </div>

@@ -108,7 +108,9 @@ export class WebRTCEngine {
       
       // Automatically broadcast own identity to the new connection
       if (this.peer) {
-        this.sendPayload({ type: 'sys-identity', peerId: this.peer.id, codename: this.localCodename });
+        setTimeout(() => {
+          this.sendPayload({ type: 'sys-identity', peerId: this.peer!.id, codename: this.localCodename });
+        }, 1000);
       }
     });
 
