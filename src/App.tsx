@@ -61,6 +61,7 @@ function EphemeralMessage({
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('lobby');
+  const [modalData, setModalData] = useState<{title: string, message: string} | null>(null);
   const [sysError, setSysError] = useState<string | null>(null);
   const [roomCode, setRoomCode] = useState<string>('');
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
@@ -121,7 +122,10 @@ export default function App() {
         }
         if (newStatus === 'disconnected' || newStatus === 'error') {
           setAppState('lobby');
-          alert(newStatus === 'error' ? 'ERR/01: connection_failure' : 'PEER_DISCONNECTED');
+          setModalData({
+            title: newStatus === 'error' ? 'FATAL_EXCEPTION' : 'TUNNEL_SEVERED',
+            message: newStatus === 'error' ? 'ERR/01: connection_failure' : 'PEER_DISCONNECTED'
+          });
         }
       },
       (fileId, transferred, total, isUpload) => {
@@ -271,6 +275,19 @@ export default function App() {
   return (
     <>
       <div className="crt-overlay" />
+      
+      {modalData && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+          <div className="hud-panel" style={{ padding: '32px', width: '90%', maxWidth: '400px', border: '1px solid var(--accent-alert)', background: '#050505', boxShadow: '0 0 20px rgba(255, 51, 102, 0.2)' }}>
+             <div style={{ color: 'var(--accent-alert)', marginBottom: '16px', fontWeight: 'bold', letterSpacing: '1px' }}>&gt; {modalData.title}</div>
+             <div style={{ color: 'var(--text-bright)', marginBottom: '32px', fontSize: '1.2rem' }}>{modalData.message}</div>
+             <button className="ghost-button" style={{ width: '100%', color: 'var(--text-bright)', borderColor: 'var(--accent-alert)', opacity: 0.9 }} onClick={() => setModalData(null)}>
+               [ ACKNOWLEDGE ]
+             </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', padding: '16px' }}>
         
         {/* Header HUD */}
