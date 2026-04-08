@@ -1,5 +1,3 @@
-const STATIC_SALT = new TextEncoder().encode('cipher-drop-v2-salt-strong-v1');
-
 export async function hashString(str: string): Promise<string> {
   const data = new TextEncoder().encode(str);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -9,36 +7,39 @@ export async function hashString(str: string): Promise<string> {
 }
 
 export async function deriveKey(code: string): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(code),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveBits']
-  );
+  return new Promise((resolve, reject) => {
+    // Spawn worker to handle 100k PBKDF2 iterations off the main thread.
+    // Using native ES modules worker syntax for Vite.
+    const worker = new Worker(new URL('./crypto.worker.ts', import.meta.url), { type: 'module' });
+    
+    worker.onmessage = async (e) => {
+      const { success, rawBits, error } = e.data;
+      if (success && rawBits) {
+        try {
+          const key = await crypto.subtle.importKey(
+            'raw',
+            rawBits,
+            { name: 'AES-GCM' },
+            false,
+            ['encrypt', 'decrypt']
+          );
+          resolve(key);
+        } catch (importErr) {
+          reject(importErr);
+        }
+      } else {
+        reject(new Error(error || 'Worker derivation failed'));
+      }
+      worker.terminate();
+    };
 
-  // Safari/iOS WebKit Bug Workaround:
-  // Directly using deriveKey with PBKDF2 -> AES-GCM can hang or fail silently on mobile.
-  // We manually extract the raw bits via deriveBits, then import them into an AES-GCM CryptoKey.
-  const rawBits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt: STATIC_SALT,
-      iterations: 100000, 
-      hash: 'SHA-256'
-    },
-    keyMaterial,
-    256
-  );
+    worker.onerror = (e) => {
+      reject(new Error(`Worker error: ${e.message}`));
+      worker.terminate();
+    };
 
-  return crypto.subtle.importKey(
-    'raw',
-    rawBits,
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt', 'decrypt']
-  );
+    worker.postMessage({ code });
+  });
 }
 
 export async function encryptBuffer(key: CryptoKey, data: ArrayBuffer): Promise<ArrayBuffer> {

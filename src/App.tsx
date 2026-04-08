@@ -91,6 +91,13 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, transfers]);
 
+  useEffect(() => {
+    // Cleanup typing timeout on unmount or drop to prevent memory leaks
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    };
+  }, []);
+
   const getTimestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false });
 
   const addSystemMessage = (text: string) => {

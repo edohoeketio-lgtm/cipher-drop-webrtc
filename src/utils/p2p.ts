@@ -25,6 +25,16 @@ const CHUNK_SIZE = 64 * 1024; // 64KB
 const MAX_BUFFER_AMOUNT = 1 * 1024 * 1024; // 1MB backpressure threshold
 export const GROUP_FILE_LIMIT = 50 * 1024 * 1024; // 50MB
 
+const WEBRTC_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'stun:stun.cloudflare.com:3478' }
+    ]
+  }
+};
+
 export class WebRTCEngine {
   private peer: Peer | null = null;
   public conns: Map<string, DataConnection> = new Map();
@@ -54,7 +64,7 @@ export class WebRTCEngine {
     this.isHost = true;
     this.cryptoKey = key;
     this.setStatus('connecting');
-    this.peer = new Peer(`cdropv1-${hashedId}`);
+    this.peer = new Peer(`cdropv1-${hashedId}`, WEBRTC_CONFIG);
 
     this.peer.on('error', (err) => {
       console.error("Peer Error:", err);
@@ -81,7 +91,7 @@ export class WebRTCEngine {
     this.isHost = false;
     this.cryptoKey = key;
     this.setStatus('connecting');
-    this.peer = new Peer();
+    this.peer = new Peer(WEBRTC_CONFIG);
 
     this.peer.on('error', (err) => {
       console.error("Peer Error:", err);
@@ -153,7 +163,7 @@ export class WebRTCEngine {
     if (conn.peerConnection) {
         conn.peerConnection.addEventListener('iceconnectionstatechange', () => {
             const state = conn.peerConnection.iceConnectionState;
-            if (['disconnected', 'failed', 'closed'].includes(state)) {
+            if (['failed', 'closed'].includes(state)) {
                 handleDrop();
             }
         });
