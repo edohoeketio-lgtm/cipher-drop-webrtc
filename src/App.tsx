@@ -98,6 +98,21 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    // Timeout for ICE traversal (STUN/TURN) - Prevents 2 minute spinning
+    if (appState === 'deriving' && status === 'CONNECTING') {
+       timeoutId = setTimeout(() => {
+           setSysError("NETWORK_TIMEOUT: Peer routing blocked by firewall or symmetric NAT.");
+           setStatus("DISCONNECTED");
+           engineRef.current?.disconnect();
+       }, 15000); 
+    }
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [appState, status]);
+
   const getTimestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false });
 
   const addSystemMessage = (text: string) => {
