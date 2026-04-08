@@ -25,7 +25,7 @@ export async function deriveKey(code: string): Promise<CryptoKey> {
     {
       name: 'PBKDF2',
       salt: STATIC_SALT,
-      iterations: 1000, // Reduced from 10000 to prevent hang on slow devices/mobile WebKit
+      iterations: 100000, 
       hash: 'SHA-256'
     },
     keyMaterial,

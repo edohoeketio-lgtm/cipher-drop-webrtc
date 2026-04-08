@@ -379,7 +379,9 @@ export default function App() {
                {sysError ? (
                   <div style={{ color: 'var(--accent-alert)', marginTop: '16px' }}>&gt; FATAL_EXCEPTION: {sysError}</div>
                ) : (
-                  <div style={{ color: 'var(--accent-cyan)', marginTop: '16px' }} className="blink">DERIVING...</div>
+                  <div style={{ color: 'var(--accent-cyan)', marginTop: '16px' }} className="blink">
+                     {status === 'CONNECTING' ? 'ESTABLISHING_P2P_TUNNEL...' : 'DERIVING_KEYS...'}
+                  </div>
                )}
 
                {sysError && (
