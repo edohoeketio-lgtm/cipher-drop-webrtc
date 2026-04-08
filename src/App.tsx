@@ -396,14 +396,14 @@ export default function App() {
                   <div style={{ display: 'flex', borderBottom: '1px dashed var(--border-subtle)' }}>
                       <select 
                          className="ghost-input" 
-                         style={{ width: '100px', borderRight: '1px solid var(--border-subtle)', borderBottom: 'none', borderTop: 'none', borderLeft: 'none', padding: '8px' }}
+                         style={{ width: '100px', borderRight: '1px solid var(--border-subtle)', borderBottom: 'none', borderTop: 'none', borderLeft: 'none', padding: '8px', color: 'var(--accent-cyan)' }}
                          value={expirySelection === undefined ? 'OFF' : expirySelection.toString()}
                          onChange={e => setExpirySelection(e.target.value === 'OFF' ? undefined : parseInt(e.target.value))}
                       >
-                         <option value="OFF">💣 OFF</option>
-                         <option value="10">💣 10s</option>
-                         <option value="30">💣 30s</option>
-                         <option value="60">💣 60s</option>
+                         <option value="OFF" style={{ background: '#050505', color: 'var(--accent-cyan)' }}>💣 OFF</option>
+                         <option value="10" style={{ background: '#050505', color: 'var(--accent-cyan)' }}>💣 10s</option>
+                         <option value="30" style={{ background: '#050505', color: 'var(--accent-cyan)' }}>💣 30s</option>
+                         <option value="60" style={{ background: '#050505', color: 'var(--accent-cyan)' }}>💣 60s</option>
                       </select>
                       <button 
                          className="ghost-button" 
