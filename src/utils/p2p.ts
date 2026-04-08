@@ -23,6 +23,30 @@ interface IncomingFile {
 
 const CHUNK_SIZE = 64 * 1024; // 64KB
 const MAX_BUFFER_AMOUNT = 1 * 1024 * 1024; // 1MB backpressure threshold
+const WEBRTC_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { 
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      { 
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      { 
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ]
+  }
+};
+
 export const GROUP_FILE_LIMIT = 50 * 1024 * 1024; // 50MB
 
 
@@ -56,7 +80,7 @@ export class WebRTCEngine {
     this.isHost = true;
     this.cryptoKey = key;
     this.setStatus('connecting');
-    this.peer = new Peer(`cdropv1-${hashedId}`);
+    this.peer = new Peer(`cdropv1-${hashedId}`, WEBRTC_CONFIG);
 
     this.peer.on('error', (err) => {
       console.error("Peer Error:", err);
@@ -83,7 +107,7 @@ export class WebRTCEngine {
     this.isHost = false;
     this.cryptoKey = key;
     this.setStatus('connecting');
-    this.peer = new Peer();
+    this.peer = new Peer(WEBRTC_CONFIG);
 
     this.peer.on('error', (err) => {
       console.error("Peer Error:", err);
