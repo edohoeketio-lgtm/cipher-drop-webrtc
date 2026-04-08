@@ -82,7 +82,7 @@ export default function App() {
   const [roomSize, setRoomSize] = useState(1);
 
   const engineRef = useRef<WebRTCEngine | null>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isManualDisconnectRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
