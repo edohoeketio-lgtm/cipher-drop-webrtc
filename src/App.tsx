@@ -12,13 +12,13 @@ interface TransferState {
 }
 
 function EphemeralMessage({ 
-  msg, isMe, timestamp, onExpunge
+  msg, isMe, timestamp, senderName, onExpunge
 }: { 
-  msg: Extract<Payload, {type: 'text'}>, isMe: boolean, timestamp: string, onExpunge?: (id: string) => void
+  msg: Extract<Payload, {type: 'text'}>, isMe: boolean, timestamp: string, senderName: string, onExpunge?: (id: string) => void
 }) {
   const isSystem = !isMe && (msg.data.startsWith('E2E_') || msg.data.startsWith('UPLOAD_COMPLETE') || msg.data.startsWith('SYS_') || msg.data.startsWith('ERR_'));
   
-  let tag = isMe ? '<LOCAL>' : '<REMOTE>';
+  let tag = isMe ? `<LOCAL: ${senderName}>` : `<REMOTE: ${senderName}>`;
   if (isSystem) tag = '<SYS>';
 
   let color = isMe ? 'var(--text-bright)' : 'var(--accent-cyan)';
@@ -59,8 +59,17 @@ function EphemeralMessage({
   );
 }
 
+const generateCodename = () => {
+  const prefixes = ['NULL', 'VOID', 'HEX', 'ZERO', 'SYNTH', 'NEON', 'CHROME', 'DATA', 'CIPHER', 'STATIC', 'GLITCH', 'ROGUE'];
+  const suffixes = ['ECHO', 'WRAITH', 'RONIN', 'PROPHET', 'WALKER', 'BREAKER', 'BURNER', 'MONK', 'PROTOCOL', 'GHOST', 'NINJA', 'NOMAD'];
+  return `${prefixes[Math.floor(Math.random() * prefixes.length)]}-${suffixes[Math.floor(Math.random() * suffixes.length)]}`;
+};
+
 export default function App() {
   const [appState, setAppState] = useState<AppState>('lobby');
+  const [localCodename] = useState(generateCodename());
+  const [identities, setIdentities] = useState<Record<string, string>>({});
+  const [typingPeers, setTypingPeers] = useState<Set<string>>(new Set());
   const [modalData, setModalData] = useState<{title: string, message: string} | null>(null);
   const [sysError, setSysError] = useState<string | null>(null);
   const [roomCode, setRoomCode] = useState<string>('');
@@ -73,6 +82,7 @@ export default function App() {
   const [roomSize, setRoomSize] = useState(1);
 
   const engineRef = useRef<WebRTCEngine | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -109,6 +119,17 @@ export default function App() {
         }
         else if (payload.type === 'text' || payload.type === 'file-ready') {
           setMessages((prev) => [...prev, {msg: payload, isMe: false, timestamp: getTimestamp()}]);
+        }
+        else if (payload.type === 'sys-identity') {
+          setIdentities(prev => ({ ...prev, [payload.peerId]: payload.codename }));
+        }
+        else if (payload.type === 'sys-typing') {
+          setTypingPeers(prev => {
+             const next = new Set(prev);
+             if (payload.isTyping) next.add(payload.peerId);
+             else next.delete(payload.peerId);
+             return next;
+          });
         }
       },
       (newStatus) => {
@@ -155,6 +176,7 @@ export default function App() {
       const key = await deriveKey(code);
       const hashedId = await hashString(code);
       initEngine();
+      engineRef.current!.localCodename = localCodename;
       engineRef.current?.host(hashedId, key);
       setAppState('hosting');
     } catch (e: any) {
@@ -177,6 +199,7 @@ export default function App() {
       const key = await deriveKey(code);
       const hashedId = await hashString(code);
       initEngine();
+      engineRef.current!.localCodename = localCodename;
       engineRef.current?.join(hashedId, key);
     } catch (e: any) {
       console.error('Derive error:', e);
@@ -209,9 +232,22 @@ export default function App() {
     e.preventDefault();
     if (!textInput.trim() || !engineRef.current) return;
     const id = await engineRef.current.sendText(textInput, expirySelection);
-    const payload: Payload = { type: 'text', data: textInput, expiry: expirySelection, id };
+    const payload: Payload = { type: 'text', data: textInput, expiry: expirySelection, id, peerId: engineRef.current.isHost ? 'host' : 'peer' }; // Just for local render mapping
     setMessages((prev) => [...prev, {msg: payload, isMe: true, timestamp: getTimestamp()}]);
     setTextInput('');
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    engineRef.current.sendTyping(false);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+     setTextInput(e.target.value);
+     if (engineRef.current && appState === 'chat') {
+        engineRef.current.sendTyping(true);
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {
+           engineRef.current?.sendTyping(false);
+        }, 1500);
+     }
   };
 
   const uploadFiles = async (files: FileList | null) => {
@@ -247,12 +283,14 @@ export default function App() {
     const { msg, isMe, timestamp } = entry;
     
     if (msg.type === 'text') {
-      return <EphemeralMessage key={index} msg={msg} isMe={isMe} timestamp={timestamp} onExpunge={handleExpunge} />;
+      const senderName = isMe ? localCodename : (msg.peerId ? identities[msg.peerId] || 'UNKNOWN' : 'UNKNOWN');
+      return <EphemeralMessage key={index} msg={msg} isMe={isMe} timestamp={timestamp} senderName={senderName} onExpunge={handleExpunge} />;
     }
     
     if (msg.type === 'file-ready') {
+        const senderName = isMe ? localCodename : (msg.peerId ? identities[msg.peerId] || 'UNKNOWN' : 'UNKNOWN');
         const url = URL.createObjectURL(msg.blob);
-        const tag = isMe ? '<LOCAL>' : '<REMOTE>';
+        const tag = isMe ? `<LOCAL: ${senderName}>` : `<REMOTE: ${senderName}>`;
         return (
             <div key={index} style={{ marginBottom: '8px' }}>
                 <div style={{ color: 'var(--accent-success)' }}>
@@ -392,6 +430,12 @@ export default function App() {
                  <div ref={messagesEndRef} />
                </div>
 
+               {typingPeers.size > 0 && (
+                 <div style={{ color: 'var(--accent-cyan)', fontSize: '12px', fontStyle: 'italic', padding: '0 16px 8px 16px' }} className="blink">
+                   &gt; {Array.from(typingPeers).map(id => identities[id] || 'UNKNOWN').join(', ')} is formulating payload...
+                 </div>
+               )}
+
                <div style={{ borderTop: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', borderBottom: '1px dashed var(--border-subtle)' }}>
                       <select 
@@ -416,7 +460,7 @@ export default function App() {
                   </div>
                   <form onSubmit={handleSendText} style={{ display: 'flex' }}>
                     <div style={{ padding: '16px', color: 'var(--text-muted)' }}>&gt;</div>
-                    <input type="text" value={textInput} onChange={e => setTextInput(e.target.value)} className="ghost-input" style={{ border: 'none', boxShadow: 'none', background: 'transparent' }} placeholder="Insert payload..." autoFocus />
+                    <input type="text" value={textInput} onChange={handleInputChange} className="ghost-input" style={{ border: 'none', boxShadow: 'none', background: 'transparent' }} placeholder={`[${localCodename}] Insert payload...`} autoFocus />
                   </form>
                </div>
             </div>

@@ -2,11 +2,13 @@ import Peer, { type DataConnection } from "peerjs";
 import { encryptBuffer, decryptBuffer } from './crypto';
 
 export type Payload = 
-  | { type: 'text', data: string, expiry?: number, id?: string }
+  | { type: 'text', data: string, expiry?: number, id?: string, peerId?: string }
   | { type: 'sys-nuke' }
   | { type: 'sys-room-update', size: number }
-  | { type: 'file-metadata', fileId: string, name: string, mimeType: string, totalSize: number, totalChunks: number }
-  | { type: 'file-ready', fileId: string, blob: Blob, name: string };
+  | { type: 'file-metadata', fileId: string, name: string, mimeType: string, totalSize: number, totalChunks: number, peerId?: string }
+  | { type: 'file-ready', fileId: string, blob: Blob, name: string, peerId?: string }
+  | { type: 'sys-identity', peerId: string, codename: string }
+  | { type: 'sys-typing', peerId: string, isTyping: boolean };
 
 type ConnectionListener = (payload: Payload) => void;
 type StatusListener = (status: 'disconnected' | 'connecting' | 'connected' | 'error') => void;
@@ -34,6 +36,7 @@ export class WebRTCEngine {
   public isHost: boolean = false;
   private cryptoKey: CryptoKey | null = null;
   public roomSize: number = 1;
+  public localCodename: string = "UNKNOWN";
   
   private incomingFiles: Map<string, IncomingFile> = new Map();
 
@@ -101,6 +104,11 @@ export class WebRTCEngine {
           this.setStatus('connected');
         }
         this.broadcastRoomSize();
+      }
+      
+      // Automatically broadcast own identity to the new connection
+      if (this.peer) {
+        this.sendPayload({ type: 'sys-identity', peerId: this.peer.id, codename: this.localCodename });
       }
     });
 
@@ -210,8 +218,9 @@ export class WebRTCEngine {
               type: 'file-ready',
               fileId: incoming.meta.fileId,
               blob,
-              name: incoming.meta.name
-            });
+              name: incoming.meta.name,
+              peerId: incoming.meta.peerId // Keep peer ID for UI
+            } as Payload);
           }
         }
       }
@@ -239,7 +248,7 @@ export class WebRTCEngine {
 
   public async sendText(text: string, expiry?: number): Promise<string> {
     const id = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
-    await this.sendPayload({ type: 'text', data: text, expiry, id });
+    await this.sendPayload({ type: 'text', data: text, expiry, id, peerId: this.peer?.id });
     return id;
   }
 
@@ -248,6 +257,17 @@ export class WebRTCEngine {
           await this.sendPayload({ type: 'sys-nuke' });
           this.triggerLocalNuke();
       }
+  }
+
+  public async sendIdentity(codename: string) {
+      if (!this.peer) return;
+      this.localCodename = codename;
+      await this.sendPayload({ type: 'sys-identity', peerId: this.peer.id, codename });
+  }
+
+  public async sendTyping(isTyping: boolean) {
+      if (!this.peer) return;
+      await this.sendPayload({ type: 'sys-typing', peerId: this.peer.id, isTyping });
   }
 
   public async sendFile(file: File) {
@@ -269,7 +289,8 @@ export class WebRTCEngine {
       name: file.name,
       mimeType: file.type,
       totalSize,
-      totalChunks
+      totalChunks,
+      peerId: this.peer?.id
     });
 
     // 3. Begin Chunking Loop with Backpressure
