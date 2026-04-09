@@ -237,6 +237,9 @@ export default function App() {
         else if (payload.type === 'sys-nuke') {
           handleNukeReset();
         }
+        else if (payload.type === 'sys-error') {
+           setModalData({ title: 'FATAL_EXCEPTION', message: `ERR: ${payload.message}` });
+        }
         else if (payload.type === 'text' || payload.type === 'file-ready') {
           setMessages((prev) => [...prev, {msg: payload, isMe: false, timestamp: getTimestamp()}]);
         }

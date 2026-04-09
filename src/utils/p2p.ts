@@ -8,10 +8,11 @@ export type Payload =
   | { type: 'file-metadata', fileId: string, name: string, mimeType: string, totalSize: number, totalChunks: number, peerId?: string, expiry?: number }
   | { type: 'file-ready', fileId: string, blob: Blob, name: string, peerId?: string, expiry?: number }
   | { type: 'sys-identity', peerId: string, codename: string }
+  | { type: 'sys-error', message: string }
   | { type: 'sys-typing', peerId: string, isTyping: boolean };
 
 type ConnectionListener = (payload: Payload) => void;
-type StatusListener = (status: 'disconnected' | 'connecting' | 'connected' | 'error') => void;
+type StatusListener = (status: 'disconnected' | 'connecting' | 'connected' | 'error', message?: string) => void;
 type ProgressListener = (fileId: string, transferred: number, total: number, isUpload: boolean) => void;
 
 interface IncomingFile {
@@ -85,15 +86,27 @@ export class WebRTCEngine {
     this.setStatus('connecting');
     this.peer = new Peer(`cdropv1-${hashedId}`, WEBRTC_CONFIG);
 
+    // Watchdog to aggressively bypass free tier stealth drops
+    const watchdog = setInterval(() => {
+        if (!this.peer || this.peer.destroyed) {
+            clearInterval(watchdog);
+            return;
+        }
+        if (this.peer.disconnected) {
+            this.peer.reconnect();
+        }
+    }, 5000);
+
     this.peer.on('disconnected', () => {
         if (this.peer && !this.peer.destroyed) {
            this.peer.reconnect();
         }
     });
 
-    this.peer.on('error', (err) => {
+    this.peer.on('error', (err: any) => {
       console.error("Peer Error:", err);
       this.hasErrored = true;
+      if (this.onDataCallback) this.onDataCallback({ type: 'sys-error', message: err.type || err.message });
       this.setStatus('error');
     });
 
@@ -125,9 +138,10 @@ export class WebRTCEngine {
         }
     });
 
-    this.peer.on('error', (err) => {
+    this.peer.on('error', (err: any) => {
       console.error("Peer Error:", err);
       this.hasErrored = true;
+      if (this.onDataCallback) this.onDataCallback({ type: 'sys-error', message: err.type || err.message });
       this.setStatus('error');
     });
 
