@@ -44,7 +44,9 @@ const WEBRTC_CONFIG = {
         credential: 'openrelayproject'
       }
     ]
-  }
+  },
+  pingInterval: 5000,
+  debug: 1
 };
 
 export const GROUP_FILE_LIMIT = 50 * 1024 * 1024; // 50MB
@@ -63,6 +65,7 @@ export class WebRTCEngine {
   private cryptoKey: CryptoKey | null = null;
   public roomSize: number = 1;
   public localCodename: string = "UNKNOWN";
+  private hasErrored: boolean = false;
   
   private incomingFiles: Map<string, IncomingFile> = new Map();
 
@@ -82,8 +85,15 @@ export class WebRTCEngine {
     this.setStatus('connecting');
     this.peer = new Peer(`cdropv1-${hashedId}`, WEBRTC_CONFIG);
 
+    this.peer.on('disconnected', () => {
+        if (this.peer && !this.peer.destroyed) {
+           this.peer.reconnect();
+        }
+    });
+
     this.peer.on('error', (err) => {
       console.error("Peer Error:", err);
+      this.hasErrored = true;
       this.setStatus('error');
     });
 
@@ -109,8 +119,15 @@ export class WebRTCEngine {
     this.setStatus('connecting');
     this.peer = new Peer(WEBRTC_CONFIG);
 
+    this.peer.on('disconnected', () => {
+        if (this.peer && !this.peer.destroyed) {
+           this.peer.reconnect();
+        }
+    });
+
     this.peer.on('error', (err) => {
       console.error("Peer Error:", err);
+      this.hasErrored = true;
       this.setStatus('error');
     });
 
@@ -167,8 +184,10 @@ export class WebRTCEngine {
        if (this.isHost) {
           this.broadcastRoomSize();
        } else {
-          // Dead-Man's Switch: If client loses Host, room dies.
-          this.setStatus('disconnected');
+          // Dead-Man's Switch
+          if (!this.hasErrored) {
+              this.setStatus('disconnected');
+          }
           this.triggerLocalNuke();
        }
     }
