@@ -577,7 +577,7 @@ export default function App() {
                </div>
 
                {typingPeers.size > 0 && (
-                 <div style={{ color: 'var(--accent-cyan)', fontSize: '12px', fontStyle: 'italic', padding: '0 16px 8px 16px' }} className="blink">
+                 <div style={{ color: 'var(--accent-cyan)', fontSize: '12px', fontStyle: 'italic', padding: '0 16px 8px 16px' }}>
                    &gt; {Array.from(typingPeers).map(id => identities[id] || 'UNKNOWN').join(', ')} is typing...
                  </div>
                )}
