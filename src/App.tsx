@@ -137,9 +137,14 @@ function EphemeralAsset({
             )}
             
             {!isTimed && (
-                <a href={url} download={msg.name} style={{ color: 'var(--text-bright)', textDecoration: 'none', display: 'inline-block', marginTop: '4px' }}>
-                    <span className="glow-text">» DOWNLOAD_ASSET</span>
-                </a>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginTop: '8px' }}>
+                    <a href={url} download={msg.name} style={{ color: 'var(--text-bright)', textDecoration: 'none', display: 'inline-block' }}>
+                        <span className="glow-text">» DOWNLOAD_ASSET</span>
+                    </a>
+                    <button onClick={() => setIsRevealed(false)} className="ghost-button" style={{ padding: '4px 8px', fontSize: '10px', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}>
+                        [ CONCEAL ]
+                    </button>
+                </div>
             )}
         </div>
     </div>
