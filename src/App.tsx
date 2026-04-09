@@ -119,9 +119,9 @@ function EphemeralAsset({
             {isTimed && isRevealed && <span className="blink" style={{ color: 'var(--accent-alert)', marginLeft: '8px' }}>(💣 {timeLeft}s)</span>}
         </div>
         <div style={{ marginLeft: '16px', marginTop: '4px', paddingLeft: '8px', borderLeft: '1px solid var(--border-subtle)' }}>
-            {!isRevealed && isTimed ? (
+            {!isRevealed ? (
                 <button onClick={handleReveal} className="ghost-button" style={{ color: 'var(--accent-cyan)', padding: '16px', margin: '8px 0', borderStyle: 'dashed' }}>
-                   [ 👁 DECRYPT_SECURE_ASSET ]
+                   {isTimed ? '[ 👁 DECRYPT_SECURE_ASSET ]' : '[ 👁 REVEAL_ASSET ]'}
                 </button>
             ) : (
                 <div style={{ position: 'relative', display: 'inline-block', ...drmProps.style }}>
