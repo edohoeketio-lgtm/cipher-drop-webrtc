@@ -175,6 +175,7 @@ export default function App() {
 
   const engineRef = useRef<WebRTCEngine | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingSentRef = useRef<number>(0);
   const isManualDisconnectRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -374,17 +375,34 @@ export default function App() {
     setTextInput('');
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     engineRef.current.sendTyping(false);
+    lastTypingSentRef.current = 0;
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
      setTextInput(e.target.value);
-     if (engineRef.current && appState === 'chat') {
-        engineRef.current.sendTyping(true);
-        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = setTimeout(() => {
-           engineRef.current?.sendTyping(false);
-        }, 1500);
+     if (!engineRef.current || appState !== 'chat') return;
+
+     const text = e.target.value;
+     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+     if (text.trim() === '') {
+         engineRef.current.sendTyping(false);
+         lastTypingSentRef.current = 0;
+         return;
      }
+
+     const now = Date.now();
+     // Slack/WA behavior: Only broadcast 'true' if we haven't told them in 2.5s
+     if (now - lastTypingSentRef.current > 2500) {
+         engineRef.current.sendTyping(true);
+         lastTypingSentRef.current = now;
+     }
+
+     // Drop indicator if they pause typing for 5 seconds
+     typingTimeoutRef.current = setTimeout(() => {
+         engineRef.current?.sendTyping(false);
+         lastTypingSentRef.current = 0;
+     }, 5000);
   };
 
   const uploadFiles = async (files: FileList | null) => {
