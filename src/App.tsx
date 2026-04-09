@@ -560,7 +560,7 @@ export default function App() {
 
                {typingPeers.size > 0 && (
                  <div style={{ color: 'var(--accent-cyan)', fontSize: '12px', fontStyle: 'italic', padding: '0 16px 8px 16px' }} className="blink">
-                   &gt; {Array.from(typingPeers).map(id => identities[id] || 'UNKNOWN').join(', ')} is formulating payload...
+                   &gt; {Array.from(typingPeers).map(id => identities[id] || 'UNKNOWN').join(', ')} is typing...
                  </div>
                )}
 
@@ -588,7 +588,7 @@ export default function App() {
                   </div>
                   <form onSubmit={handleSendText} style={{ display: 'flex' }}>
                     <div style={{ padding: '16px', color: 'var(--text-muted)' }}>&gt;</div>
-                    <input type="text" value={textInput} onChange={handleInputChange} className="ghost-input" style={{ border: 'none', boxShadow: 'none', background: 'transparent' }} placeholder={`[${localCodename}] Insert payload...`} autoFocus />
+                    <input type="text" value={textInput} onChange={handleInputChange} className="ghost-input" style={{ border: 'none', boxShadow: 'none', background: 'transparent', width: '100%' }} placeholder={`[${localCodename}] Type a message...`} autoFocus />
                   </form>
                </div>
             </div>
