@@ -213,6 +213,7 @@ export default function App() {
   };
 
   const handleNukeReset = () => {
+    isManualDisconnectRef.current = true;
     if (engineRef.current) engineRef.current.disconnect();
     setAppState('lobby');
     setMessages([]);
@@ -223,7 +224,10 @@ export default function App() {
   };
 
   const initEngine = () => {
-    if (engineRef.current) engineRef.current.disconnect();
+    if (engineRef.current) {
+        isManualDisconnectRef.current = true;
+        engineRef.current.disconnect();
+    }
     
     engineRef.current = new WebRTCEngine(
       (payload) => {
