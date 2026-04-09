@@ -5,8 +5,8 @@ export type Payload =
   | { type: 'text', data: string, expiry?: number, id?: string, peerId?: string }
   | { type: 'sys-nuke' }
   | { type: 'sys-room-update', size: number }
-  | { type: 'file-metadata', fileId: string, name: string, mimeType: string, totalSize: number, totalChunks: number, peerId?: string }
-  | { type: 'file-ready', fileId: string, blob: Blob, name: string, peerId?: string }
+  | { type: 'file-metadata', fileId: string, name: string, mimeType: string, totalSize: number, totalChunks: number, peerId?: string, expiry?: number }
+  | { type: 'file-ready', fileId: string, blob: Blob, name: string, peerId?: string, expiry?: number }
   | { type: 'sys-identity', peerId: string, codename: string }
   | { type: 'sys-typing', peerId: string, isTyping: boolean };
 
@@ -247,7 +247,8 @@ export class WebRTCEngine {
               fileId: incoming.meta.fileId,
               blob,
               name: incoming.meta.name,
-              peerId: incoming.meta.peerId // Keep peer ID for UI
+              peerId: incoming.meta.peerId, // Keep peer ID for UI
+              expiry: incoming.meta.expiry  // Propagate expiry from metadata
             } as Payload);
           }
         }
@@ -298,7 +299,7 @@ export class WebRTCEngine {
       await this.sendPayload({ type: 'sys-typing', peerId: this.peer.id, isTyping });
   }
 
-  public async sendFile(file: File) {
+  public async sendFile(file: File, expiry?: number) {
     if (!this.cryptoKey || this.conns.size === 0) return;
 
     if (this.roomSize > 2 && file.size > GROUP_FILE_LIMIT) {
@@ -318,7 +319,8 @@ export class WebRTCEngine {
       mimeType: file.type,
       totalSize,
       totalChunks,
-      peerId: this.peer?.id
+      peerId: this.peer?.id,
+      expiry
     });
 
     // 3. Begin Chunking Loop with Backpressure

@@ -59,6 +59,93 @@ function EphemeralMessage({
   );
 }
 
+function EphemeralAsset({ 
+  msg, isMe, timestamp, senderName, url, onExpunge 
+}: { 
+  msg: Extract<Payload, {type: 'file-ready'}>, isMe: boolean, timestamp: string, senderName: string, url: string, onExpunge?: (id: string, url: string) => void
+}) {
+  const [isRevealed, setIsRevealed] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<number | null>(msg.expiry || null);
+  const [isExpunged, setIsExpunged] = useState(msg.name === '[ASSET_EXPUNGED]');
+
+  useEffect(() => {
+    if (!isRevealed || timeLeft === null) return;
+    if (timeLeft <= 0) {
+      if (!isExpunged) {
+          setIsExpunged(true);
+          if (onExpunge && msg.fileId) onExpunge(msg.fileId, url);
+      }
+      return;
+    }
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev && prev <= 1) {
+          clearInterval(timer);
+          if (!isExpunged) {
+             setIsExpunged(true);
+             if (onExpunge && msg.fileId) onExpunge(msg.fileId, url);
+          }
+          return 0;
+        }
+        return prev ? prev - 1 : 0;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isRevealed, timeLeft, msg.fileId, onExpunge, isExpunged, url]);
+
+  const tag = isMe ? `<LOCAL: ${senderName}>` : `<REMOTE: ${senderName}>`;
+  
+  if (isExpunged) {
+      return (
+        <div style={{ marginBottom: '8px', color: 'var(--text-muted)' }}>
+          <span style={{ color: 'var(--text-muted)' }}>[{timestamp}] {tag}</span> [DATA_DEAD_DROP: ASSET_EXPUNGED]
+        </div>
+      );
+  }
+
+  const isTimed = msg.expiry !== undefined && msg.expiry > 0;
+  const handleReveal = () => setIsRevealed(true);
+
+  const drmProps = isTimed ? {
+      onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+      onDragStart: (e: React.DragEvent) => e.preventDefault(),
+      style: { userSelect: 'none' as const, WebkitUserDrag: 'none' as const }
+  } : {};
+
+  return (
+    <div style={{ marginBottom: '8px' }}>
+        <div style={{ color: 'var(--accent-success)' }}>
+            <span style={{ color: 'var(--text-muted)' }}>[{timestamp}] {tag}</span> [RX_COMPLETE: {msg.name} // {Math.floor(msg.blob.size/1024)}KB]
+            {isTimed && isRevealed && <span className="blink" style={{ color: 'var(--accent-alert)', marginLeft: '8px' }}>(💣 {timeLeft}s)</span>}
+        </div>
+        <div style={{ marginLeft: '16px', marginTop: '4px', paddingLeft: '8px', borderLeft: '1px solid var(--border-subtle)' }}>
+            {!isRevealed && isTimed ? (
+                <button onClick={handleReveal} className="ghost-button" style={{ color: 'var(--accent-cyan)', padding: '16px', margin: '8px 0', borderStyle: 'dashed' }}>
+                   [ 👁 DECRYPT_SECURE_ASSET ]
+                </button>
+            ) : (
+                <div style={{ position: 'relative', display: 'inline-block', ...drmProps.style }}>
+                    {msg.blob.type.startsWith('image/') && <img src={url} alt="asset" {...drmProps} style={{ maxWidth: '100%', maxHeight: '300px', display: 'block', margin: '8px 0', border: '1px solid var(--border-subtle)', ...drmProps.style }} />}
+                    {msg.blob.type.startsWith('audio/') && <audio src={url} controls={!isTimed} autoPlay={isTimed} {...drmProps} style={{ display: 'block', marginTop: '8px', opacity: 0.8, height: '30px', ...drmProps.style }} />}
+                    {msg.blob.type.startsWith('video/') && <video src={url} controls={!isTimed} autoPlay={isTimed} playsInline {...drmProps} style={{ maxWidth: '100%', maxHeight: '300px', display: 'block', margin: '8px 0', ...drmProps.style }} />}
+                    
+                    {/* DRM Overlay to prevent simple right clicking/saving on elements if browser ignores unselectable */}
+                    {isTimed && (
+                       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, background: 'transparent' }} onContextMenu={e => e.preventDefault()} />
+                    )}
+                </div>
+            )}
+            
+            {!isTimed && (
+                <a href={url} download={msg.name} style={{ color: 'var(--text-bright)', textDecoration: 'none', display: 'inline-block', marginTop: '4px' }}>
+                    <span className="glow-text">» DOWNLOAD_ASSET</span>
+                </a>
+            )}
+        </div>
+    </div>
+  );
+}
+
 const generateCodename = () => {
   const prefixes = ['NULL', 'VOID', 'HEX', 'ZERO', 'SYNTH', 'NEON', 'CHROME', 'DATA', 'CIPHER', 'STATIC', 'GLITCH', 'ROGUE'];
   const suffixes = ['ECHO', 'WRAITH', 'RONIN', 'PROPHET', 'WALKER', 'BREAKER', 'BURNER', 'MONK', 'PROTOCOL', 'GHOST', 'NINJA', 'NOMAD'];
@@ -263,6 +350,16 @@ export default function App() {
     }));
   }, []);
 
+  const handleFileExpunge = useCallback((fileId: string, url: string) => {
+    URL.revokeObjectURL(url);
+    setMessages(prev => prev.map(m => {
+       if (m.msg.type === 'file-ready' && m.msg.fileId === fileId) {
+           return { ...m, msg: { ...m.msg, name: '[ASSET_EXPUNGED]', blob: new Blob([new ArrayBuffer(0)]) } };
+       }
+       return m;
+    }));
+  }, []);
+
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!textInput.trim() || !engineRef.current) return;
@@ -294,7 +391,7 @@ export default function App() {
              continue;
          }
          setMessages(prev => [...prev, { msg: { type: 'text', data: `[TX_INIT: ${file.name}]`, expiry: expirySelection }, isMe: true, timestamp: getTimestamp() }]);
-         await engineRef.current.sendFile(file).catch(err => {
+         await engineRef.current.sendFile(file, expirySelection).catch(err => {
              addSystemMessage(`ERR_TX_FAILED: ${err.message}`);
          });
       }
@@ -324,23 +421,9 @@ export default function App() {
     
     if (msg.type === 'file-ready') {
         const senderName = isMe ? localCodename : (msg.peerId ? identities[msg.peerId] || 'UNKNOWN' : 'UNKNOWN');
-        const url = URL.createObjectURL(msg.blob);
-        const tag = isMe ? `<LOCAL: ${senderName}>` : `<REMOTE: ${senderName}>`;
-        return (
-            <div key={index} style={{ marginBottom: '8px' }}>
-                <div style={{ color: 'var(--accent-success)' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>[{timestamp}] {tag}</span> [RX_COMPLETE: {msg.name} // {Math.floor(msg.blob.size/1024)}KB]
-                </div>
-                <div style={{ marginLeft: '16px', marginTop: '4px', paddingLeft: '8px', borderLeft: '1px solid var(--border-subtle)' }}>
-                    {msg.blob.type.startsWith('image/') && <img src={url} alt="asset" style={{ maxWidth: '100%', maxHeight: '300px', display: 'block', margin: '8px 0', border: '1px solid var(--border-subtle)' }} />}
-                    {msg.blob.type.startsWith('audio/') && <audio src={url} controls style={{ display: 'block', marginTop: '8px', opacity: 0.8, height: '30px' }} />}
-                    {msg.blob.type.startsWith('video/') && <video src={url} controls style={{ maxWidth: '100%', maxHeight: '300px', display: 'block', margin: '8px 0' }} />}
-                    <a href={url} download={msg.name} style={{ color: 'var(--text-bright)', textDecoration: 'none', display: 'inline-block', marginTop: '4px' }}>
-                        <span className="glow-text">» DOWNLOAD_ASSET</span>
-                    </a>
-                </div>
-            </div>
-        );
+        // Do not generate a blob URL if it was already expunged
+        const url = msg.name === '[ASSET_EXPUNGED]' ? '' : URL.createObjectURL(msg.blob);
+        return <EphemeralAsset key={index} msg={msg} isMe={isMe} timestamp={timestamp} senderName={senderName} url={url} onExpunge={handleFileExpunge} />;
     }
     return null;
   };
