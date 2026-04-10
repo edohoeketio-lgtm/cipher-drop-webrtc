@@ -108,8 +108,12 @@ export class WebRTCEngine {
 
     this.peer.on('error', (err: any) => {
       console.error("Peer Error:", err);
-      // Ignore ghost peer connection attempts in the dynamic mesh
-      if (err.type === 'peer-unavailable') return;
+      // Only crash the UI on mathematically fatal cryptographic or configuration errors
+      const fatalErrors = ['browser-incompatible', 'invalid-id', 'invalid-key', 'unavailable-id', 'ssl-unavailable'];
+      if (!fatalErrors.includes(err.type)) {
+          console.warn(`Non-fatal peer error ignored: ${err.type}`);
+          return;
+      }
       
       this.hasErrored = true;
       if (this.onDataCallback) this.onDataCallback({ type: 'sys-error', message: err.type || err.message });
@@ -145,8 +149,12 @@ export class WebRTCEngine {
 
     this.peer.on('error', (err: any) => {
       console.error("Peer Error:", err);
-      // Ignore ghost peer connection attempts in the dynamic mesh
-      if (err.type === 'peer-unavailable') return;
+      // Only crash the UI on mathematically fatal cryptographic or configuration errors
+      const fatalErrors = ['browser-incompatible', 'invalid-id', 'invalid-key', 'unavailable-id', 'ssl-unavailable'];
+      if (!fatalErrors.includes(err.type)) {
+          console.warn(`Non-fatal peer error ignored: ${err.type}`);
+          return;
+      }
 
       this.hasErrored = true;
       if (this.onDataCallback) this.onDataCallback({ type: 'sys-error', message: err.type || err.message });
