@@ -241,6 +241,41 @@ export default function App() {
     };
   }, [appState, status]);
 
+  const hasAttemptedAutoJoin = useRef(false);
+
+  useEffect(() => {
+    if (hasAttemptedAutoJoin.current) return;
+    const hash = window.location.hash.substring(1).toUpperCase();
+    if (hash && hash.length >= 8) {
+       hasAttemptedAutoJoin.current = true;
+       window.history.replaceState(null, '', window.location.pathname);
+       setJoinCodeInput(hash);
+       
+       const autoJoin = async () => {
+         setMessages([]);
+         setTransfers({});
+         setIdentities({});
+         setRoomSize(1);
+         setReplyTo(null);
+         setAppState('deriving');
+         setSysError(null);
+         try {
+           await new Promise(r => setTimeout(r, 50)); 
+           if (!window.crypto?.subtle) throw new Error("WebCrypto API not available");
+           const key = await deriveKey(hash);
+           const hashedId = await hashString(hash);
+           initEngine();
+           engineRef.current!.localCodename = localCodename;
+           engineRef.current?.join(hashedId, key);
+         } catch (e: any) {
+           console.error('Derive error:', e);
+           setSysError(e.message || e.name || "Unknown derivation error");
+         }
+       };
+       autoJoin();
+    }
+  }, [localCodename]);
+
   const getTimestamp = () => new Date().toLocaleTimeString('en-US', { hour12: false });
 
   const addSystemMessage = (text: string) => {
@@ -415,7 +450,8 @@ export default function App() {
 
   const handleCopyCode = async () => {
     try {
-      await navigator.clipboard.writeText(roomCode);
+      const link = `${window.location.origin}${window.location.pathname}#${roomCode}`;
+      await navigator.clipboard.writeText(link);
     } catch(e) {
       console.error('Failed to copy', e);
     }
