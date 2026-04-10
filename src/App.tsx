@@ -636,10 +636,16 @@ export default function App() {
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
           {appState === 'lobby' && (
             <div className="hud-panel" style={{ padding: '32px', width: '100%', maxWidth: '440px' }}>
-               <div style={{ color: 'var(--text-muted)', marginBottom: '16px', fontSize: '11px', lineHeight: '1.6', borderBottom: '1px dashed var(--border-subtle)', paddingBottom: '16px' }}>
-                 Volatile P2P relay network. Zero-knowledge transmission. <br/>
-                 No central routing. No persistent data logs. <br/>
-                 Ephemeral by design.
+               <div style={{ color: 'var(--text-muted)', marginBottom: '16px', fontSize: '12px', lineHeight: '1.6', borderBottom: '1px dashed var(--border-subtle)', paddingBottom: '16px' }}>
+                 <div style={{ marginBottom: '8px', color: 'var(--text-bright)' }}>WHAT IS CIPHER DROP?</div>
+                 A highly secure, burner room for sharing files and chatting. <br/>
+                 Files are beamed directly between devices—no central servers. <br/>
+                 When you close the tab, the room vanishes forever.
+                 
+                 <div style={{ marginTop: '16px', marginBottom: '8px', color: 'var(--text-bright)' }}>HOW TO USE</div>
+                 1. Click [ HOST_NETWORK ]<br/>
+                 2. Share the generated link with a friend<br/>
+                 3. Drop files and chat with zero tracking
                </div>
                <div style={{ color: 'var(--text-muted)', marginBottom: '24px' }}>&gt; SYSTEM_READY<br/>&gt; AWAITING_COMMAND</div>
                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
