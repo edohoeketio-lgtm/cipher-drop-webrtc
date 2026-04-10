@@ -108,6 +108,9 @@ export class WebRTCEngine {
 
     this.peer.on('error', (err: any) => {
       console.error("Peer Error:", err);
+      // Ignore ghost peer connection attempts in the dynamic mesh
+      if (err.type === 'peer-unavailable') return;
+      
       this.hasErrored = true;
       if (this.onDataCallback) this.onDataCallback({ type: 'sys-error', message: err.type || err.message });
       this.setStatus('error');
@@ -142,6 +145,9 @@ export class WebRTCEngine {
 
     this.peer.on('error', (err: any) => {
       console.error("Peer Error:", err);
+      // Ignore ghost peer connection attempts in the dynamic mesh
+      if (err.type === 'peer-unavailable') return;
+
       this.hasErrored = true;
       if (this.onDataCallback) this.onDataCallback({ type: 'sys-error', message: err.type || err.message });
       this.setStatus('error');
