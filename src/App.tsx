@@ -356,7 +356,7 @@ export default function App() {
           if (!isManualDisconnectRef.current) {
             setModalData({
               title: newStatus === 'error' ? 'FATAL_EXCEPTION' : 'TUNNEL_SEVERED',
-              message: newStatus === 'error' ? 'ERR/01: connection_failure' : 'PEER_DISCONNECTED'
+              message: newStatus === 'error' ? 'ERR/01: connection_failure' : 'PEER_DISCONNECTED (If on 5G/Mobile Data, your network Carrier-Grade NAT dropped the P2P WebRTC packet. Connect both devices to WiFi, or inject a TURN server in settings).'
             });
           }
           setAppState('lobby');
