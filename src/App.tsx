@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { WebRTCEngine, type Payload, GROUP_FILE_LIMIT } from './utils/p2p';
+import { WebRTCEngine, type Payload, GROUP_FILE_LIMIT, DEFAULT_WEBRTC_CONFIG } from './utils/p2p';
 import { generateRoomCode } from './utils/wordlist';
 import { deriveKey, hashString } from './utils/crypto';
 
@@ -137,7 +137,7 @@ function EphemeralAsset({
         <div style={{ marginLeft: '16px', marginTop: '4px', paddingLeft: '8px', borderLeft: '1px solid var(--border-subtle)' }}>
             {!isRevealed ? (
                 <button onClick={handleReveal} className="ghost-button" style={{ color: 'var(--accent-cyan)', padding: '16px', margin: '8px 0', borderStyle: 'dashed' }}>
-                   {isTimed ? '[ 👁 DECRYPT_SECURE_ASSET ]' : '[ 👁 REVEAL_ASSET ]'}
+                   {isTimed ? '[ DECRYPT_SECURE_ASSET ]' : '[ REVEAL_ASSET ]'}
                 </button>
             ) : (
                 <div style={{ position: 'relative', display: 'inline-block', ...drmProps.style }}>
@@ -197,6 +197,10 @@ export default function App() {
   const [roomSize, setRoomSize] = useState(1);
   const [replyTo, setReplyTo] = useState<{text: string, sender: string} | null>(null);
   const [mentionMenu, setMentionMenu] = useState<{ query: string, active: boolean }>({ query: '', active: false });
+  const [showSettings, setShowSettings] = useState(false);
+  const [configJson, setConfigJson] = useState(() => {
+      return localStorage.getItem('cipher_drop_config') || JSON.stringify(DEFAULT_WEBRTC_CONFIG, null, 2);
+  });
 
   const engineRef = useRef<WebRTCEngine | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -258,6 +262,13 @@ export default function App() {
     if (engineRef.current) {
         isManualDisconnectRef.current = true;
         engineRef.current.disconnect();
+    }
+
+    let parsedConfig = DEFAULT_WEBRTC_CONFIG;
+    try {
+        parsedConfig = JSON.parse(configJson);
+    } catch(e) {
+        console.warn("Invalid config, using default", e);
     }
     
     engineRef.current = new WebRTCEngine(
@@ -329,11 +340,17 @@ export default function App() {
                setTransfers(prev => { const next = { ...prev }; delete next[fileId]; return next; });
            }, 1000);
         }
-      }
+      },
+      parsedConfig
     );
   };
 
   const handleHost = async () => {
+    setMessages([]);
+    setTransfers({});
+    setIdentities({});
+    setRoomSize(1);
+    setReplyTo(null);
     const code = generateRoomCode();
     setRoomCode(code);
     setAppState('deriving');
@@ -359,6 +376,11 @@ export default function App() {
     e.preventDefault();
     const code = joinCodeInput.trim().toUpperCase();
     if (!code) return;
+    setMessages([]);
+    setTransfers({});
+    setIdentities({});
+    setRoomSize(1);
+    setReplyTo(null);
     setAppState('deriving');
     setSysError(null);
     try {
@@ -385,6 +407,9 @@ export default function App() {
     setAppState('lobby');
     setMessages([]);
     setTransfers({});
+    setIdentities({});
+    setRoomSize(1);
+    setReplyTo(null);
     setStatus('DISCONNECTED');
   };
 
@@ -521,6 +546,30 @@ export default function App() {
     <>
       <div className="crt-overlay" />
       
+      {showSettings && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+          <div className="hud-panel" style={{ padding: '32px', width: '90%', maxWidth: '600px' }}>
+             <div style={{ color: 'var(--accent-cyan)', marginBottom: '16px', fontWeight: 'bold' }}>&gt; NET_CONFIG // DEV_OVERRIDES</div>
+             <div style={{ color: 'var(--text-muted)', marginBottom: '16px', fontSize: '12px' }}>
+               Inject custom STUN/TURN rules or self-hosted signaling routes. Use strictly valid JSON.
+             </div>
+             <textarea 
+               value={configJson} 
+               onChange={e => setConfigJson(e.target.value)}
+               className="ghost-input"
+               style={{ width: '100%', height: '300px', fontFamily: 'monospace', fontSize: '12px', marginBottom: '16px', color: 'var(--text-bright)', background: '#0a0a0a' }}
+             />
+             <div style={{ display: 'flex', gap: '16px' }}>
+               <button className="ghost-button" onClick={() => {
+                   try { JSON.parse(configJson); localStorage.setItem('cipher_drop_config', configJson); setShowSettings(false); } 
+                   catch (e) { alert("Invalid JSON"); }
+               }}>SAVE_CONFIG</button>
+               <button className="ghost-button" style={{ color: 'var(--accent-alert)' }} onClick={() => setShowSettings(false)}>CANCEL</button>
+             </div>
+          </div>
+        </div>
+      )}
+
       {modalData && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
           <div className="hud-panel" style={{ padding: '32px', width: '90%', maxWidth: '400px', border: '1px solid var(--accent-alert)', background: '#050505', boxShadow: '0 0 20px rgba(255, 51, 102, 0.2)' }}>
@@ -557,9 +606,10 @@ export default function App() {
                  Ephemeral by design.
                </div>
                <div style={{ color: 'var(--text-muted)', marginBottom: '24px' }}>&gt; SYSTEM_READY<br/>&gt; AWAITING_COMMAND</div>
-               <div style={{ display: 'flex', gap: '16px' }}>
+               <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                  <button className="ghost-button" onClick={handleHost}>HOST_NETWORK</button>
                  <button className="ghost-button" onClick={handleJoinInit}>JOIN_NETWORK</button>
+                 <button className="ghost-button" style={{ opacity: 0.7, color: 'var(--accent-cyan)' }} onClick={() => setShowSettings(true)}>[ SETTINGS ]</button>
                </div>
             </div>
           )}

@@ -9,6 +9,7 @@ export type Payload =
   | { type: 'file-ready', fileId: string, blob: Blob, name: string, peerId?: string, expiry?: number }
   | { type: 'sys-identity', peerId: string, codename: string }
   | { type: 'sys-error', message: string }
+  | { type: 'sys-mesh-sync', peers: string[] }
   | { type: 'sys-typing', peerId: string, isTyping: boolean };
 
 type ConnectionListener = (payload: Payload) => void;
@@ -23,8 +24,8 @@ interface IncomingFile {
 }
 
 const CHUNK_SIZE = 64 * 1024; // 64KB
-const MAX_BUFFER_AMOUNT = 1 * 1024 * 1024; // 1MB backpressure threshold
-const WEBRTC_CONFIG = {
+const MAX_BUFFER_AMOUNT = 512 * 1024; // 512KB backpressure threshold
+export const DEFAULT_WEBRTC_CONFIG = {
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -67,13 +68,15 @@ export class WebRTCEngine {
   public roomSize: number = 1;
   public localCodename: string = "UNKNOWN";
   private hasErrored: boolean = false;
+  private config: any;
   
   private incomingFiles: Map<string, IncomingFile> = new Map();
 
-  constructor(onData: ConnectionListener, onStatus: StatusListener, onProgress: ProgressListener) {
+  constructor(onData: ConnectionListener, onStatus: StatusListener, onProgress: ProgressListener, customConfig?: any) {
     this.onDataCallback = onData;
     this.onStatusCallback = onStatus;
     this.onProgressCallback = onProgress;
+    this.config = customConfig || DEFAULT_WEBRTC_CONFIG;
   }
 
   private setStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error') {
@@ -84,7 +87,7 @@ export class WebRTCEngine {
     this.isHost = true;
     this.cryptoKey = key;
     this.setStatus('connecting');
-    this.peer = new Peer(`cdropv1-${hashedId}`, WEBRTC_CONFIG);
+    this.peer = new Peer(`cdropv1-${hashedId}`, this.config);
 
     // Watchdog to aggressively bypass free tier stealth drops
     const watchdog = setInterval(() => {
@@ -121,16 +124,15 @@ export class WebRTCEngine {
   }
 
   private broadcastRoomSize() {
-      if (!this.isHost) return;
       this.roomSize = this.conns.size + 1;
-      this.sendPayload({ type: 'sys-room-update', size: this.roomSize });
+      if (this.onDataCallback) this.onDataCallback({ type: 'sys-room-update', size: this.roomSize });
   }
 
   public join(hashedId: string, key: CryptoKey) {
     this.isHost = false;
     this.cryptoKey = key;
     this.setStatus('connecting');
-    this.peer = new Peer(WEBRTC_CONFIG);
+    this.peer = new Peer(this.config);
 
     this.peer.on('disconnected', () => {
         if (this.peer && !this.peer.destroyed) {
@@ -154,19 +156,22 @@ export class WebRTCEngine {
 
   private setupConnection(conn: DataConnection) {
     conn.on('open', () => {
-      if (!this.isHost) {
+      if (this.conns.size === 1 && this.isHost) {
         this.setStatus('connected');
-      } else {
-        if (this.conns.size === 1) {
-          this.setStatus('connected');
-        }
-        this.broadcastRoomSize();
+      } else if (!this.isHost && this.roomSize === 1) {
+        this.setStatus('connected');
       }
+      this.broadcastRoomSize();
       
       // Automatically broadcast own identity to the new connection
       if (this.peer) {
         setTimeout(() => {
           this.sendPayload({ type: 'sys-identity', peerId: this.peer!.id, codename: this.localCodename });
+          // MESH: Inform everyone of all active peers so they can cross-connect
+          const allPeers = Array.from(this.conns.keys());
+          if (allPeers.length > 1) {
+             this.sendPayload({ type: 'sys-mesh-sync', peers: allPeers });
+          }
         }, 1000);
       }
     });
@@ -174,16 +179,6 @@ export class WebRTCEngine {
     conn.on('data', async (data: unknown) => {
       if (!this.cryptoKey) return;
       const buffer = data as ArrayBuffer;
-
-      // HOST RELAY LOGIC (STAR TOPOLOGY)
-      // Broadcast identical encrypted packet to all other connected peers
-      if (this.isHost) {
-          for (const [peerId, otherConn] of this.conns.entries()) {
-              if (peerId !== conn.peer && otherConn.open) {
-                 otherConn.send(buffer);
-              }
-          }
-      }
 
       try {
         const decryptedBuffer = await decryptBuffer(this.cryptoKey, buffer);
@@ -195,14 +190,12 @@ export class WebRTCEngine {
 
     const handleDrop = () => {
        this.conns.delete(conn.peer);
-       if (this.isHost) {
-          this.broadcastRoomSize();
-       } else {
-          // Dead-Man's Switch
-          if (!this.hasErrored) {
-              this.setStatus('disconnected');
-          }
-          this.triggerLocalNuke();
+       this.broadcastRoomSize();
+       if (this.conns.size === 0) {
+           if (!this.hasErrored) {
+               this.setStatus('disconnected');
+           }
+           this.triggerLocalNuke();
        }
     }
 
@@ -241,6 +234,16 @@ export class WebRTCEngine {
           receivedChunks: 0,
           receivedBytes: 0
         });
+      }
+
+      if (payload.type === 'sys-mesh-sync') {
+          payload.peers.forEach(id => {
+              if (this.peer && id !== this.peer.id && !this.conns.has(id)) {
+                  const newConn = this.peer.connect(id, { reliable: true });
+                  this.conns.set(newConn.peer, newConn);
+                  this.setupConnection(newConn);
+              }
+          });
       }
 
       if (payload.type === 'sys-room-update') {
