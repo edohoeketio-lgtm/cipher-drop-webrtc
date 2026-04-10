@@ -2,7 +2,7 @@ import Peer, { type DataConnection } from "peerjs";
 import { encryptBuffer, decryptBuffer } from './crypto';
 
 export type Payload = 
-  | { type: 'text', data: string, expiry?: number, id?: string, peerId?: string }
+  | { type: 'text', data: string, quote?: { text: string, sender: string }, expiry?: number, id?: string, peerId?: string }
   | { type: 'sys-nuke' }
   | { type: 'sys-room-update', size: number }
   | { type: 'file-metadata', fileId: string, name: string, mimeType: string, totalSize: number, totalChunks: number, peerId?: string, expiry?: number }
@@ -308,9 +308,9 @@ export class WebRTCEngine {
     await this.sendPacket(packetBuffer.buffer);
   }
 
-  public async sendText(text: string, expiry?: number): Promise<string> {
+  public async sendText(text: string, expiry?: number, quote?: { text: string, sender: string }): Promise<string> {
     const id = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
-    await this.sendPayload({ type: 'text', data: text, expiry, id, peerId: this.peer?.id });
+    await this.sendPayload({ type: 'text', data: text, quote, expiry, id, peerId: this.peer?.id });
     return id;
   }
 

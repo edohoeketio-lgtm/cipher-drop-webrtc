@@ -12,16 +12,16 @@ interface TransferState {
 }
 
 function EphemeralMessage({ 
-  msg, isMe, timestamp, senderName, onExpunge
+  msg, isMe, timestamp, senderName, userColor, onExpunge, onQuote, localCodename
 }: { 
-  msg: Extract<Payload, {type: 'text'}>, isMe: boolean, timestamp: string, senderName: string, onExpunge?: (id: string) => void
+  msg: Extract<Payload, {type: 'text'}>, isMe: boolean, timestamp: string, senderName: string, userColor: string, onExpunge?: (id: string) => void, onQuote?: (text: string, sender: string) => void, localCodename: string
 }) {
   const isSystem = !isMe && (msg.data.startsWith('E2E_') || msg.data.startsWith('UPLOAD_COMPLETE') || msg.data.startsWith('SYS_') || msg.data.startsWith('ERR_'));
   
   let tag = isMe ? `<LOCAL: ${senderName}>` : `<REMOTE: ${senderName}>`;
   if (isSystem) tag = '<SYS>';
 
-  let color = isMe ? 'var(--text-bright)' : 'var(--accent-cyan)';
+  let color = isMe ? 'var(--text-bright)' : userColor;
   if (isSystem) color = 'var(--text-muted)';
 
   const [timeLeft, setTimeLeft] = useState<number | null>(msg.expiry || null);
@@ -52,9 +52,25 @@ function EphemeralMessage({
   const isExpunged = msg.data === '[DATA EXPUNGED]';
   const timeStr = (timeLeft !== null && !isExpunged) ? ` (💣 ${timeLeft}s)` : '';
 
+  // Parse for @Mentions
+  const isMentioned = !isMe && !isExpunged && msg.data.includes(`@${localCodename}`);
+
   return (
-    <div style={{ marginBottom: '4px', overflowWrap: 'break-word', color: isExpunged ? 'var(--text-muted)' : color }}>
-      <span style={{ color: 'var(--text-muted)' }}>[{timestamp}] {tag}</span> {msg.data}{timeStr}
+    <div style={{ marginBottom: '8px', overflowWrap: 'break-word', color: isExpunged ? 'var(--text-muted)' : color, background: isMentioned ? 'rgba(0, 255, 234, 0.1)' : 'transparent', padding: isMentioned ? '2px 4px' : '0', borderLeft: isMentioned ? '2px solid var(--accent-cyan)' : 'none' }}>
+      {msg.quote && !isExpunged && (
+          <div style={{ padding: '4px 8px', borderLeft: `2px solid ${userColor}`, opacity: 0.7, marginBottom: '4px', fontSize: '0.9em', color: userColor }}>
+            <div style={{ fontSize: '0.8em', color: 'var(--text-muted)' }}>{msg.quote.sender}</div>
+            {msg.quote.text}
+          </div>
+      )}
+      <span style={{ color: userColor, marginRight: '8px' }}>[{timestamp}] {tag}</span> 
+      <span>{msg.data}</span>
+      {timeStr}
+      {!isExpunged && !isSystem && onQuote && (
+          <button className="ghost-button" style={{ marginLeft: '12px', opacity: 0.5, padding: '0px 4px', fontSize: '10px' }} onClick={() => onQuote(msg.data, senderName)} title="Reply">
+             [ ↵ ]
+          </button>
+      )}
     </div>
   );
 }
@@ -157,6 +173,13 @@ const generateCodename = () => {
   return `${prefixes[Math.floor(Math.random() * prefixes.length)]}-${suffixes[Math.floor(Math.random() * suffixes.length)]}`;
 };
 
+const USER_COLORS = ['#ff5555', '#55ff55', '#5555ff', '#ffff55', '#ff55ff', '#55ffff', '#ffaa00', '#00ffea'];
+const getStringColor = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
+};
+
 export default function App() {
   const [appState, setAppState] = useState<AppState>('lobby');
   const [localCodename] = useState(generateCodename());
@@ -172,6 +195,8 @@ export default function App() {
   const [textInput, setTextInput] = useState('');
   const [expirySelection, setExpirySelection] = useState<number | undefined>(undefined);
   const [roomSize, setRoomSize] = useState(1);
+  const [replyTo, setReplyTo] = useState<{text: string, sender: string} | null>(null);
+  const [mentionMenu, setMentionMenu] = useState<{ query: string, active: boolean }>({ query: '', active: false });
 
   const engineRef = useRef<WebRTCEngine | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -179,6 +204,12 @@ export default function App() {
   const isManualDisconnectRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+     if ("Notification" in window && Notification.permission === 'default') {
+         Notification.requestPermission();
+     }
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -241,6 +272,17 @@ export default function App() {
            setModalData({ title: 'FATAL_EXCEPTION', message: `ERR: ${payload.message}` });
         }
         else if (payload.type === 'text' || payload.type === 'file-ready') {
+          if (payload.type === 'text' && document.hidden && "Notification" in window && Notification.permission === 'granted') {
+             const quirkyMessages = [
+                 "Look, a chicken crossing the road...",
+                 "Your pizza delivery is here.",
+                 "Did you leave the stove on?",
+                 "A wild notification appeared!",
+                 "Nothing to see here, move along."
+             ];
+             const str = quirkyMessages[Math.floor(Math.random() * quirkyMessages.length)];
+             new Notification("Cipher Drop", { body: str });
+          }
           setMessages((prev) => [...prev, {msg: payload, isMe: false, timestamp: getTimestamp()}]);
         }
         else if (payload.type === 'sys-identity') {
@@ -376,17 +418,34 @@ export default function App() {
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!textInput.trim() || !engineRef.current) return;
-    const id = await engineRef.current.sendText(textInput, expirySelection);
-    const payload: Payload = { type: 'text', data: textInput, expiry: expirySelection, id, peerId: engineRef.current.isHost ? 'host' : 'peer' }; // Just for local render mapping
+    const outboundQuote = replyTo ? { text: replyTo.text, sender: replyTo.sender } : undefined;
+    const id = await engineRef.current.sendText(textInput, expirySelection, outboundQuote);
+    const payload: Payload = { type: 'text', data: textInput, quote: outboundQuote, expiry: expirySelection, id, peerId: engineRef.current.isHost ? 'host' : 'peer' }; // Just for local render mapping
     setMessages((prev) => [...prev, {msg: payload, isMe: true, timestamp: getTimestamp()}]);
     setTextInput('');
+    setReplyTo(null);
+    setMentionMenu({ query: '', active: false });
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     engineRef.current.sendTyping(false);
     lastTypingSentRef.current = 0;
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-     setTextInput(e.target.value);
+     const val = e.target.value;
+     setTextInput(val);
+
+     const lastWordIdx = val.lastIndexOf('@');
+     if (lastWordIdx !== -1 && (lastWordIdx === 0 || val[lastWordIdx - 1] === ' ')) {
+         const query = val.slice(lastWordIdx + 1);
+         if (!query.includes(' ')) {
+             setMentionMenu({ query, active: true });
+         } else {
+             setMentionMenu({ query: '', active: false });
+         }
+     } else {
+         setMentionMenu({ query: '', active: false });
+     }
+
      if (!engineRef.current || appState !== 'chat') return;
 
      const text = e.target.value;
@@ -446,7 +505,7 @@ export default function App() {
     
     if (msg.type === 'text') {
       const senderName = isMe ? localCodename : (msg.peerId ? identities[msg.peerId] || 'UNKNOWN' : 'UNKNOWN');
-      return <EphemeralMessage key={index} msg={msg} isMe={isMe} timestamp={timestamp} senderName={senderName} onExpunge={handleExpunge} />;
+      return <EphemeralMessage key={index} msg={msg} isMe={isMe} timestamp={timestamp} senderName={senderName} userColor={getStringColor(senderName)} onExpunge={handleExpunge} onQuote={(text, sender) => setReplyTo({text, sender})} localCodename={localCodename} />;
     }
     
     if (msg.type === 'file-ready') {
@@ -611,10 +670,41 @@ export default function App() {
                       </button>
                       <input type="file" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={(e) => uploadFiles(e.target.files)} />
                   </div>
-                  <form onSubmit={handleSendText} style={{ display: 'flex' }}>
-                    <div style={{ padding: '16px', color: 'var(--text-muted)' }}>&gt;</div>
-                    <input type="text" value={textInput} onChange={handleInputChange} className="ghost-input" style={{ border: 'none', boxShadow: 'none', background: 'transparent', width: '100%' }} placeholder={`[${localCodename}] Type a message...`} autoFocus />
-                  </form>
+                  <div style={{ position: 'relative' }}>
+                      {replyTo && (
+                          <div style={{ padding: '8px 16px', background: 'rgba(0, 255, 234, 0.05)', borderBottom: '1px solid var(--border-subtle)', borderLeft: '2px solid var(--accent-cyan)', display: 'flex', justifyContent: 'space-between' }}>
+                              <div>
+                                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>REPLYING TO: {replyTo.sender}</div>
+                                  <div style={{ fontSize: '12px', color: 'var(--text-bright)' }}>{replyTo.text}</div>
+                              </div>
+                              <button className="ghost-button" style={{ padding: '0 8px', border: 'none', color: 'var(--accent-alert)' }} onClick={() => setReplyTo(null)}>X</button>
+                          </div>
+                      )}
+                      {mentionMenu.active && (
+                          <div style={{ position: 'absolute', bottom: '100%', left: '32px', background: '#050505', border: '1px solid var(--border-subtle)', zIndex: 10 }}>
+                              {Object.values(identities)
+                                 .filter(name => name.toLowerCase().includes(mentionMenu.query.toLowerCase()))
+                                 .map(name => (
+                                      <div 
+                                         key={name}
+                                         style={{ padding: '8px 16px', color: getStringColor(name), cursor: 'pointer', borderBottom: '1px solid #111' }}
+                                         onClick={() => {
+                                             const val = textInput;
+                                             const lastWordIdx = val.lastIndexOf('@');
+                                             setTextInput(val.slice(0, lastWordIdx) + `@${name} `);
+                                             setMentionMenu({ query: '', active: false });
+                                         }}
+                                      >
+                                          @{name}
+                                      </div>
+                                 ))}
+                          </div>
+                      )}
+                      <form onSubmit={handleSendText} style={{ display: 'flex' }}>
+                        <div style={{ padding: '16px', color: 'var(--text-muted)' }}>&gt;</div>
+                        <input type="text" value={textInput} onChange={handleInputChange} className="ghost-input" style={{ border: 'none', boxShadow: 'none', background: 'transparent', width: '100%' }} placeholder={`[${localCodename}] Type a message...`} autoFocus />
+                      </form>
+                  </div>
                </div>
             </div>
           )}
