@@ -1,4 +1,4 @@
-# 🔒 Cipher Drop
+# Cipher Drop
 
 > **A fast, serverless peer-to-peer messaging and zero-knowledge file sharing experiment.**
 
@@ -6,7 +6,7 @@ Cipher Drop is a browser-native WebRTC app built to test client-side encryption 
 
 ![Cipher Drop Architecture Overview](docs/hero-placeholder.png)
 
-## ⚡ Architecture
+## Architecture
 
 This project skips the server entirely and handles all state, binary streaming, and cryptography directly on the client.
 
@@ -16,7 +16,7 @@ This project skips the server entirely and handles all state, binary streaming, 
 - **Ephemeral DRM-Lite:** Media assets use a "Click-to-Reveal" UI that blocks right-clicks and drag-and-drops. Unused or timed-out assets are purged from memory (`URL.revokeObjectURL()`).
 - **Signaling Watchdog:** Free signaling nodes tend to drop idle WebSockets. The host runs a polling heartbeat to force silent reconnects if the socket dies, keeping the room alive for late joiners.
 
-## 🛠 Tech Stack
+## Tech Stack
 
 - **Framework:** React 18 / TypeScript
 - **Build Tool:** Vite (compiles to a < 100kb payload)
@@ -24,7 +24,7 @@ This project skips the server entirely and handles all state, binary streaming, 
 - **Cryptography:** Native WebCrypto API (`AES-GCM`, `PBKDF2`, `SHA-256`)
 - **Styling:** Brutalist UI with pure CSS variables
 
-## 🚀 Local Development
+## Local Development
 
 To run this locally:
 
@@ -37,10 +37,10 @@ npm run dev
 
 Visit `http://localhost:5173`. Open a second incognito window to act as the joining peer.
 
-## 📦 Continuous Integration
+## Continuous Integration
 
 GitHub Actions handles the CI pipeline. Pushes to `master` automatically trigger static type checking (`tsc`) and generate the optimized production static bundle (`vite build`).
 
-## 🛡️ License
+## License
 
 MIT License.
